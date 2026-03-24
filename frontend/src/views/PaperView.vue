@@ -41,25 +41,30 @@
     </el-card>
 
     <el-card class="aq-card mt">
-      <template #header>交易记录</template>
-      <el-table :data="trades" size="small" max-height="360" stripe>
-        <el-table-column prop="time" label="时间" width="180">
-          <template #default="{ row }">{{ fmtTime(row.time) }}</template>
-        </el-table-column>
-        <el-table-column prop="symbol" label="代码" width="100" />
-        <el-table-column prop="side" label="方向" width="80" />
-        <el-table-column prop="price" label="价格" width="100" />
-        <el-table-column prop="quantity" label="数量" width="90" />
-        <el-table-column prop="amount" label="成交额" width="120" />
-        <el-table-column prop="fee" label="手续费" width="100" />
-      </el-table>
+      <template #header>交易记录（虚拟滚动）</template>
+      <div class="v2-wrap">
+        <el-auto-resizer>
+          <template #default="{ height, width }">
+            <el-table-v2
+              v-if="width > 0 && height > 0"
+              :columns="tradeColumns"
+              :data="trades"
+              :width="width"
+              :height="height"
+              :row-height="38"
+              row-key="id"
+              fixed
+            />
+          </template>
+        </el-auto-resizer>
+      </div>
     </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from "element-plus";
-import { computed, onMounted, ref } from "vue";
+import { computed, h, onMounted, ref } from "vue";
 import {
   getPaperAccount,
   getPaperFeeRate,
@@ -84,10 +89,33 @@ function fmtTime(ts: number): string {
   return new Date(ts).toLocaleString();
 }
 
+const tradeColumns = computed(() => [
+  {
+    key: "time",
+    dataKey: "time",
+    title: "时间",
+    width: 176,
+    cellRenderer: ({ cellData }: { cellData: number }) => h("span", fmtTime(cellData))
+  },
+  { key: "symbol", dataKey: "symbol", title: "代码", width: 96 },
+  { key: "side", dataKey: "side", title: "方向", width: 72 },
+  { key: "price", dataKey: "price", title: "价格", width: 88 },
+  { key: "quantity", dataKey: "quantity", title: "数量", width: 80 },
+  { key: "amount", dataKey: "amount", title: "成交额", width: 112 },
+  { key: "fee", dataKey: "fee", title: "手续费", width: 88 },
+  {
+    key: "strategy",
+    dataKey: "strategy",
+    title: "策略",
+    width: 140,
+    cellRenderer: ({ cellData }: { cellData: string | undefined }) => h("span", cellData ?? "")
+  }
+]);
+
 async function load() {
   account.value = await getPaperAccount();
   positions.value = await listPositions();
-  trades.value = await listTrades();
+  trades.value = await listTrades(5000);
   feeRate.value = await getPaperFeeRate();
 }
 
@@ -142,5 +170,9 @@ onMounted(load);
 }
 .mt {
   margin-top: 4px;
+}
+.v2-wrap {
+  height: 400px;
+  width: 100%;
 }
 </style>

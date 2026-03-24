@@ -10,8 +10,15 @@ export async function getStockList() {
   return data;
 }
 
-export async function getHistorical(params: { symbol: string; start?: string; end?: string; period?: string }) {
-  const { data } = await api.get("/historical", { params });
+export async function getHistorical(params: {
+  symbol: string;
+  start?: string;
+  end?: string;
+  period?: string;
+  signal?: AbortSignal;
+}) {
+  const { signal, ...query } = params;
+  const { data } = await api.get("/historical", { params: query, signal });
   return data;
 }
 

@@ -2,7 +2,7 @@
   <div class="page">
     <div class="head">
       <h2 class="aq-title">信号日志</h2>
-      <p class="aq-subtitle">本地 IndexedDB 存储，可筛选、导出 CSV、关闭提示音</p>
+      <p class="aq-subtitle">本地 IndexedDB；大表虚拟滚动；可筛选、导出 CSV、关闭提示音</p>
     </div>
 
     <el-card class="aq-card panel">
@@ -20,19 +20,24 @@
       </el-form>
     </el-card>
 
-    <el-card class="aq-card">
-      <el-table :data="filteredRows" size="small" max-height="560" stripe>
-        <el-table-column prop="time" label="时间" width="180">
-          <template #default="{ row }">{{ fmtTime(row.time) }}</template>
-        </el-table-column>
-        <el-table-column prop="symbol" label="代码" width="100" />
-        <el-table-column prop="name" label="名称" width="120" />
-        <el-table-column prop="strategy" label="策略" width="140" />
-        <el-table-column prop="signalType" label="信号" width="90" />
-        <el-table-column prop="price" label="价格" width="100" />
-        <el-table-column prop="changePct" label="涨跌幅%" width="100" />
-        <el-table-column prop="note" label="备注" min-width="180" />
-      </el-table>
+    <el-card class="aq-card table-card">
+      <template #header>记录列表（{{ filteredRows.length }} 条）</template>
+      <div class="v2-wrap">
+        <el-auto-resizer>
+          <template #default="{ height, width }">
+            <el-table-v2
+              v-if="width > 0 && height > 0"
+              :columns="signalColumns"
+              :data="filteredRows"
+              :width="width"
+              :height="height"
+              :row-height="38"
+              row-key="id"
+              fixed
+            />
+          </template>
+        </el-auto-resizer>
+      </div>
     </el-card>
   </div>
 </template>
@@ -40,7 +45,7 @@
 <script setup lang="ts">
 import { ElMessage } from "element-plus";
 import { storeToRefs } from "pinia";
-import { computed, onMounted, ref } from "vue";
+import { computed, h, onMounted, ref } from "vue";
 import { listSignals, type SignalRecord } from "../db/idb";
 import { useSettingsStore } from "../stores/settings";
 import { downloadCsv } from "../utils/csv";
@@ -60,8 +65,31 @@ function fmtTime(ts: number): string {
   return new Date(ts).toLocaleString();
 }
 
+const signalColumns = computed(() => [
+  {
+    key: "time",
+    dataKey: "time",
+    title: "时间",
+    width: 176,
+    cellRenderer: ({ cellData }: { cellData: number }) => h("span", fmtTime(cellData))
+  },
+  { key: "symbol", dataKey: "symbol", title: "代码", width: 92 },
+  { key: "name", dataKey: "name", title: "名称", width: 112 },
+  { key: "strategy", dataKey: "strategy", title: "策略", width: 128 },
+  { key: "signalType", dataKey: "signalType", title: "信号", width: 80 },
+  { key: "price", dataKey: "price", title: "价格", width: 88 },
+  {
+    key: "changePct",
+    dataKey: "changePct",
+    title: "涨跌%",
+    width: 88,
+    cellRenderer: ({ cellData }: { cellData: number | undefined }) => h("span", cellData == null ? "" : String(cellData))
+  },
+  { key: "note", dataKey: "note", title: "备注", width: 220 }
+]);
+
 async function load() {
-  rows.value = await listSignals(800);
+  rows.value = await listSignals(5000);
 }
 
 function exportCsv() {
@@ -90,5 +118,9 @@ onMounted(load);
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.table-card .v2-wrap {
+  height: 520px;
+  width: 100%;
 }
 </style>

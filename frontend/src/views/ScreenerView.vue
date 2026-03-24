@@ -22,6 +22,7 @@
         </el-form-item>
         <el-form-item>
           <el-button type="primary" :loading="loading" @click="run">开始选股</el-button>
+          <el-button :disabled="!loading" @click="cancelRun">取消</el-button>
         </el-form-item>
       </el-form>
       <el-progress v-if="loading" :percentage="progressPct" :stroke-width="8" style="margin-top: 8px" />
@@ -44,6 +45,7 @@
 </template>
 
 <script setup lang="ts">
+import axios, { isAxiosError } from "axios";
 import { ElMessage } from "element-plus";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { getHistorical, getStockList } from "../api/client";
@@ -59,6 +61,9 @@ const loading = ref(false);
 const progressPct = ref(0);
 const hits = ref<Array<{ symbol: string; name: string; close: number }>>([]);
 let worker: Worker | null = null;
+let reqSeq = 0;
+const pendingEval = new Map<number, (v: boolean) => void>();
+let abortCtl: AbortController | null = null;
 
 async function loadStrategies() {
   strategies.value = (await listStrategyDocs()).filter((s) => s.enabled);
@@ -69,12 +74,23 @@ function resolve(id: string): StrategyDoc | undefined {
   return strategies.value.find((s) => s.id === id);
 }
 
+function cancelRun() {
+  abortCtl?.abort();
+  for (const fn of pendingEval.values()) fn(false);
+  pendingEval.clear();
+  worker?.terminate();
+  worker = null;
+}
+
 async function run() {
   const st = resolve(strategyId.value);
   if (!st) {
     ElMessage.warning("请先在策略中心创建并启用策略");
     return;
   }
+  abortCtl?.abort();
+  abortCtl = new AbortController();
+  const httpSignal = abortCtl.signal;
   loading.value = true;
   progressPct.value = 0;
   hits.value = [];
@@ -84,11 +100,16 @@ async function run() {
     let done = 0;
     const chunkSize = 8;
     for (let start = 0; start < slice.length; start += chunkSize) {
+      if (httpSignal.aborted) break;
       const chunk = slice.slice(start, start + chunkSize);
       const part = await Promise.all(
         chunk.map(async (item) => {
           try {
-            const rows = (await getHistorical({ symbol: item.symbol, period: period.value })) as Array<Record<string, unknown>>;
+            const rows = (await getHistorical({
+              symbol: item.symbol,
+              period: period.value,
+              signal: httpSignal
+            })) as Array<Record<string, unknown>>;
             const bars: Bar[] = rows.map((r) => ({
               date: String(r.date ?? ""),
               open: Number(r.open ?? 0),
@@ -112,28 +133,46 @@ async function run() {
       progressPct.value = Math.round((done / slice.length) * 100);
       await new Promise((r) => setTimeout(r, 0));
     }
-    ElMessage.success(`扫描完成，命中 ${hits.value.length} 只`);
+    if (httpSignal.aborted) {
+      ElMessage.info("选股已取消");
+    } else {
+      ElMessage.success(`扫描完成，命中 ${hits.value.length} 只`);
+    }
   } catch (e) {
-    ElMessage.error((e as Error).message);
+    if (isAxiosError(e) && e.code === "ERR_CANCELED") {
+      ElMessage.info("选股已取消");
+    } else {
+      ElMessage.error((e as Error).message);
+    }
   } finally {
     loading.value = false;
+    abortCtl = null;
   }
 }
 
+function ensureScreenerWorker() {
+  if (worker) return;
+  // @ts-ignore Vetur import.meta false positive
+  worker = new Worker(new URL("../workers/screenerWorker.ts", import.meta.url), { type: "module" });
+  worker.addEventListener("message", (ev: MessageEvent<{ type: "ok" | "error"; reqId: number; buy?: boolean; message?: string }>) => {
+    const d = ev.data;
+    const cb = pendingEval.get(d.reqId);
+    if (!cb) return;
+    pendingEval.delete(d.reqId);
+    if (d.type === "ok") cb(Boolean(d.buy));
+    else cb(false);
+  });
+}
+
 function evalInWorker(strategy: StrategyDoc, bars: Bar[]): Promise<boolean> {
-  if (!worker) {
-    // @ts-ignore Vetur import.meta false positive
-    worker = new Worker(new URL("../workers/screenerWorker.ts", import.meta.url), { type: "module" });
-  }
+  ensureScreenerWorker();
   return new Promise((resolve) => {
     if (!worker) return resolve(false);
-    const onMsg = (ev: MessageEvent<{ type: "ok" | "error"; buy?: boolean }>) => {
-      worker?.removeEventListener("message", onMsg);
-      resolve(ev.data.type === "ok" ? Boolean(ev.data.buy) : false);
-    };
-    worker.addEventListener("message", onMsg);
+    const reqId = ++reqSeq;
+    pendingEval.set(reqId, resolve);
     worker.postMessage({
       type: "eval",
+      reqId,
       strategy,
       strategies: strategies.value,
       bars
@@ -149,6 +188,9 @@ async function addWl(row: { symbol: string; name: string }) {
 onMounted(loadStrategies);
 
 onBeforeUnmount(() => {
+  abortCtl?.abort();
+  for (const fn of pendingEval.values()) fn(false);
+  pendingEval.clear();
   worker?.terminate();
   worker = null;
 });

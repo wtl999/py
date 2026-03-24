@@ -11,6 +11,7 @@
         <el-menu-item index="/screener"><el-icon><Filter /></el-icon>智能选股</el-menu-item>
         <el-menu-item index="/watch"><el-icon><Bell /></el-icon>实时监听</el-menu-item>
         <el-menu-item index="/sync"><el-icon><Refresh /></el-icon>数据同步</el-menu-item>
+        <el-menu-item index="/reports"><el-icon><FolderOpened /></el-icon>报告中心</el-menu-item>
         <el-menu-item index="/backtest"><el-icon><TrendCharts /></el-icon>策略回测</el-menu-item>
         <el-menu-item index="/paper"><el-icon><Wallet /></el-icon>模拟交易</el-menu-item>
         <el-menu-item index="/signals"><el-icon><Document /></el-icon>信号日志</el-menu-item>
@@ -28,7 +29,7 @@
 </template>
 
 <script setup lang="ts">
-import { Bell, DataLine, Document, Filter, Odometer, Refresh, Setting, TrendCharts, Wallet, Warning } from "@element-plus/icons-vue";
+import { Bell, DataLine, Document, Filter, FolderOpened, Odometer, Refresh, Setting, TrendCharts, Wallet, Warning } from "@element-plus/icons-vue";
 </script>
 
 <style scoped>
