@@ -63,6 +63,7 @@ const hits = ref<Array<{ symbol: string; name: string; close: number }>>([]);
 let worker: Worker | null = null;
 let reqSeq = 0;
 const pendingEval = new Map<number, (v: boolean) => void>();
+let evalQueue: Promise<unknown> = Promise.resolve();
 let abortCtl: AbortController | null = null;
 
 async function loadStrategies() {
@@ -78,6 +79,7 @@ function cancelRun() {
   abortCtl?.abort();
   for (const fn of pendingEval.values()) fn(false);
   pendingEval.clear();
+  evalQueue = Promise.resolve();
   worker?.terminate();
   worker = null;
 }
@@ -119,7 +121,7 @@ async function run() {
               volume: Number(r.volume ?? 0)
             }));
             if (bars.length < 40) return null;
-            const buy = await evalInWorker(st, bars);
+            const buy = await enqueueEval(st, bars, httpSignal);
             if (!buy) return null;
             const i = bars.length - 1;
             return { symbol: item.symbol, name: item.name ?? "", close: bars[i].close };
@@ -148,6 +150,16 @@ async function run() {
     loading.value = false;
     abortCtl = null;
   }
+}
+
+function enqueueEval(strategy: StrategyDoc, bars: Bar[], signal: AbortSignal): Promise<boolean> {
+  const task = async () => {
+    if (signal.aborted) return false;
+    return evalInWorker(strategy, bars);
+  };
+  const run = evalQueue.then(task, task);
+  evalQueue = run.then(() => undefined, () => undefined);
+  return run;
 }
 
 function ensureScreenerWorker() {
@@ -191,6 +203,7 @@ onBeforeUnmount(() => {
   abortCtl?.abort();
   for (const fn of pendingEval.values()) fn(false);
   pendingEval.clear();
+  evalQueue = Promise.resolve();
   worker?.terminate();
   worker = null;
 });

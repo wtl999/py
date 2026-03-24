@@ -19,6 +19,7 @@
         <el-form-item>
           <el-button type="primary" :loading="loading" @click="run">计算并校验</el-button>
           <el-button :disabled="!rows.length" @click="exportCsv">导出快照CSV</el-button>
+          <el-button :disabled="!compareRows.length" @click="exportComparePdf">导出对照PDF</el-button>
         </el-form-item>
       </el-form>
       <el-alert
@@ -73,6 +74,8 @@
 
 <script setup lang="ts">
 import { ElMessage } from "element-plus";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import { ref } from "vue";
 import { getHistorical } from "../api/client";
 import { downloadCsv } from "../utils/csv";
@@ -157,6 +160,30 @@ function compareBenchmark() {
   compareRows.value = out.sort((a, b) => b.diff - a.diff);
   const fail = compareRows.value.filter((r) => !r.ok).length;
   ElMessage[fail ? "warning" : "success"](fail ? `校验完成：${fail} 项偏差超阈值` : "校验通过：全部在阈值内");
+}
+
+function exportComparePdf() {
+  const doc = new jsPDF({ orientation: "p", unit: "pt", format: "a4" });
+  const fail = compareRows.value.filter((r) => !r.ok).length;
+  doc.setFontSize(16);
+  doc.text(`Indicator Compare Report: ${symbol.value}`, 40, 44);
+  doc.setFontSize(11);
+  doc.text(`Rows: ${compareRows.value.length} | Failed(>0.02): ${fail} | Period: ${period.value}`, 40, 66);
+  autoTable(doc, {
+    startY: 84,
+    head: [["Date", "Metric", "Expected", "Actual", "Diff", "Pass"]],
+    body: compareRows.value.map((r) => [
+      r.date,
+      r.metric,
+      String(r.expected),
+      String(r.actual),
+      String(r.diff),
+      r.ok ? "Y" : "N"
+    ]),
+    styles: { fontSize: 8, cellPadding: 3 }
+  });
+  doc.save(`indicator_compare_${symbol.value}_${Date.now()}.pdf`);
+  ElMessage.success("对照 PDF 已导出");
 }
 </script>
 

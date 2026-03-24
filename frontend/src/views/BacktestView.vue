@@ -16,6 +16,12 @@
             <el-option v-for="s in strategyList" :key="s.id" :label="s.name" :value="s.id" />
           </el-select>
         </el-form-item>
+        <el-form-item label="对比策略">
+          <el-select v-model="compareIds" multiple collapse-tags collapse-tags-tooltip filterable style="width: 320px">
+            <el-option label="内置 MACD 金叉" value="__macd__" />
+            <el-option v-for="s in strategyList" :key="`cmp_${s.id}`" :label="s.name" :value="s.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="初始资金">
           <el-input-number v-model="initCash" :min="10000" :step="10000" />
         </el-form-item>
@@ -31,8 +37,11 @@
         <el-form-item>
           <el-button type="primary" :loading="loading" @click="run">开始回测</el-button>
           <el-button :disabled="!result.trades.length" @click="exportCsv">导出 CSV</el-button>
+          <el-button :disabled="!compareResults.length" @click="exportCompareCsv">导出对比 CSV</el-button>
           <el-button :disabled="!result.trades.length" @click="exportHtml">导出 HTML 报告</el-button>
           <el-button :disabled="!result.trades.length" @click="exportPdf">导出 PDF 报告</el-button>
+          <el-button :disabled="!compareResults.length" @click="exportComparePdf">导出对比 PDF</el-button>
+          <el-button :disabled="!compareResults.length" @click="exportChartPng">导出曲线 PNG</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -55,6 +64,26 @@
     <el-card class="aq-card chart-card">
       <template #header>权益曲线</template>
       <div ref="chartRef" class="chart" />
+    </el-card>
+
+    <el-card class="aq-card table-card" v-if="compareResults.length">
+      <template #header>多策略对比（{{ compareResults.length }}）</template>
+      <el-table :data="compareResults" size="small" stripe>
+        <el-table-column prop="name" label="策略" min-width="180" />
+        <el-table-column prop="totalReturn" label="总收益率(%)" width="130">
+          <template #default="{ row }">{{ (row.totalReturn * 100).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column prop="maxDrawdown" label="最大回撤(%)" width="130">
+          <template #default="{ row }">{{ (row.maxDrawdown * 100).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column prop="winRate" label="胜率(%)" width="110">
+          <template #default="{ row }">{{ (row.winRate * 100).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column prop="sharpeApprox" label="夏普(近似)" width="120" />
+        <el-table-column prop="trades" label="交易笔数" width="100">
+          <template #default="{ row }">{{ row.trades.length }}</template>
+        </el-table-column>
+      </el-table>
     </el-card>
 
     <el-card class="aq-card table-card">
@@ -86,6 +115,7 @@ import type { StrategyDoc } from "../utils/strategyTypes";
 
 const symbol = ref("600519");
 const strategyId = ref("__macd__");
+const compareIds = ref<string[]>([]);
 const strategyList = ref<StrategyDoc[]>([]);
 const initCash = ref(1_000_000);
 const feeRate = ref(0.0003);
@@ -95,6 +125,7 @@ const loading = ref(false);
 const chartRef = ref<HTMLDivElement | null>(null);
 let chart: echarts.ECharts | null = null;
 let worker: Worker | null = null;
+const compareResults = ref<Array<BacktestResult & { id: string; name: string }>>([]);
 
 const result = reactive<BacktestResult>({
   trades: [],
@@ -120,6 +151,11 @@ function pickStrategy(): StrategyDoc {
   return resolveStrategy(strategyId.value) ?? getBuiltinMacdStrategy();
 }
 
+function nameOfStrategy(id: string): string {
+  if (id === "__macd__") return "内置 MACD 金叉";
+  return resolveStrategy(id)?.name ?? id;
+}
+
 async function run() {
   loading.value = true;
   try {
@@ -136,10 +172,23 @@ async function run() {
       ElMessage.warning("数据太少，至少需要约 60 根K线");
       return;
     }
-    const st = pickStrategy();
-    const next = await runInWorker(bars, st);
-    Object.assign(result, next);
-    ElMessage.success(`回测完成：${symbol.value}，${next.trades.length} 笔交易`);
+    const ids = Array.from(new Set([strategyId.value, ...compareIds.value]));
+    const merged: Array<BacktestResult & { id: string; name: string }> = [];
+    for (const id of ids) {
+      const st = id === "__macd__" ? getBuiltinMacdStrategy() : resolveStrategy(id);
+      if (!st) continue;
+      const one = await runInWorker(bars, st);
+      merged.push({ ...one, id, name: nameOfStrategy(id) });
+    }
+    if (!merged.length) {
+      ElMessage.warning("未找到可执行策略");
+      return;
+    }
+    merged.sort((a, b) => b.totalReturn - a.totalReturn);
+    compareResults.value = merged;
+    const chosen = merged.find((x) => x.id === strategyId.value) ?? merged[0];
+    Object.assign(result, chosen);
+    ElMessage.success(`回测完成：${symbol.value}，已完成 ${merged.length} 个策略对比`);
     await nextTick();
     renderChart();
   } catch (e) {
@@ -182,21 +231,32 @@ function runInWorker(bars: Bar[], strategy: StrategyDoc): Promise<BacktestResult
 function renderChart() {
   if (!chartRef.value) return;
   if (!chart) chart = echarts.init(chartRef.value);
+  const series = compareResults.value.length
+    ? compareResults.value.slice(0, 6).map((r) => ({
+        type: "line",
+        name: r.name,
+        data: r.equityCurve.map((p) => p.equity),
+        smooth: true,
+        showSymbol: false
+      }))
+    : [
+        {
+          type: "line",
+          name: "当前策略",
+          data: result.equityCurve.map((p) => p.equity),
+          smooth: true,
+          showSymbol: false,
+          lineStyle: { width: 2, color: "#4b7bff" },
+          areaStyle: { color: "rgba(75,123,255,0.08)" }
+        }
+      ];
   chart.setOption({
     grid: { left: 48, right: 24, top: 24, bottom: 40 },
     tooltip: { trigger: "axis" },
+    legend: { type: "scroll", top: 0 },
     xAxis: { type: "category", data: result.equityCurve.map((p) => p.date), boundaryGap: false },
     yAxis: { type: "value", scale: true, splitLine: { lineStyle: { type: "dashed", opacity: 0.4 } } },
-    series: [
-      {
-        type: "line",
-        data: result.equityCurve.map((p) => p.equity),
-        smooth: true,
-        showSymbol: false,
-        lineStyle: { width: 2, color: "#4b7bff" },
-        areaStyle: { color: "rgba(75,123,255,0.08)" }
-      }
-    ]
+    series
   });
 }
 
@@ -207,6 +267,24 @@ function exportCsv() {
     result.trades.map((t) => [t.date, t.side, t.price, t.quantity, t.fee, t.equityAfter])
   );
   ElMessage.success("已导出");
+}
+
+function exportCompareCsv() {
+  if (!compareResults.value.length) return;
+  downloadCsv(
+    `backtest_compare_${symbol.value}_${Date.now()}.csv`,
+    ["strategyId", "strategyName", "totalReturn", "maxDrawdown", "winRate", "sharpeApprox", "tradeCount"],
+    compareResults.value.map((r) => [
+      r.id,
+      r.name,
+      r.totalReturn,
+      r.maxDrawdown,
+      r.winRate,
+      r.sharpeApprox,
+      r.trades.length
+    ])
+  );
+  ElMessage.success("对比 CSV 已导出");
 }
 
 function exportHtml() {
@@ -249,6 +327,41 @@ function exportPdf() {
   });
   doc.save(`backtest_${symbol.value}_${Date.now()}.pdf`);
   ElMessage.success("PDF 已导出");
+}
+
+function exportChartPng() {
+  if (!chart) return;
+  const url = chart.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: "#ffffff" });
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `backtest_curve_${symbol.value}_${Date.now()}.png`;
+  a.click();
+  ElMessage.success("曲线 PNG 已导出");
+}
+
+function exportComparePdf() {
+  if (!compareResults.value.length) return;
+  const doc = new jsPDF({ orientation: "p", unit: "pt", format: "a4" });
+  doc.setFontSize(16);
+  doc.text(`Backtest Compare Ranking: ${symbol.value}`, 40, 44);
+  doc.setFontSize(11);
+  doc.text(`Strategies: ${compareResults.value.length} | InitCash: ${initCash.value}`, 40, 66);
+  autoTable(doc, {
+    startY: 84,
+    head: [["Rank", "Strategy", "Return(%)", "MaxDD(%)", "Win(%)", "Sharpe", "Trades"]],
+    body: compareResults.value.map((r, idx) => [
+      String(idx + 1),
+      r.name,
+      (r.totalReturn * 100).toFixed(2),
+      (r.maxDrawdown * 100).toFixed(2),
+      (r.winRate * 100).toFixed(2),
+      r.sharpeApprox.toFixed(2),
+      String(r.trades.length)
+    ]),
+    styles: { fontSize: 8, cellPadding: 3 }
+  });
+  doc.save(`backtest_compare_${symbol.value}_${Date.now()}.pdf`);
+  ElMessage.success("对比 PDF 已导出");
 }
 
 watch(

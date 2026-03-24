@@ -97,6 +97,12 @@ function resolveStrategy(id: string): StrategyDoc | undefined {
   return strategyDocs.find((s) => s.id === id);
 }
 
+function comboChildIds(doc: StrategyDoc): string[] {
+  if (doc.kind !== "combo" || !doc.combo) return [];
+  if (doc.combo.strategyRefs?.length) return doc.combo.strategyRefs.map((x) => x.id);
+  return doc.combo.strategyIds ?? [];
+}
+
 function barsWithTick(base: Bar[], price: number): Bar[] {
   if (!base.length) return base;
   const last = base[base.length - 1];
@@ -217,29 +223,48 @@ async function evalStrategiesForQuote(q: QuoteRow) {
   const bars = barsWithTick(base, q.price);
   const i = bars.length - 1;
   const enabled = strategyDocs.filter((s) => s.enabled);
+  const evalMap = new Map<string, { buy: boolean; sell: boolean }>();
+  for (const doc of enabled) evalMap.set(doc.id, evaluateStrategyDoc(doc, bars, i, resolveStrategy));
+
+  const comboBuyCovered = new Set<string>();
+  const comboSellCovered = new Set<string>();
   for (const doc of enabled) {
-    const { buy, sell } = evaluateStrategyDoc(doc, bars, i, resolveStrategy);
-    if (buy) {
-      await onSignal({
-        symbol: q.code,
-        name: q.name,
-        strategy: doc.name,
-        signalType: "buy",
-        price: q.price,
-        changePct: q.changePct,
-        note: "策略买入信号"
-      });
+    if (doc.kind !== "combo") continue;
+    const r = evalMap.get(doc.id);
+    if (!r) continue;
+    const children = comboChildIds(doc);
+    if (r.buy) children.forEach((id) => comboBuyCovered.add(id));
+    if (r.sell) children.forEach((id) => comboSellCovered.add(id));
+  }
+
+  for (const doc of enabled) {
+    const r = evalMap.get(doc.id);
+    if (!r) continue;
+    if (r.buy) {
+      if (!(doc.kind !== "combo" && comboBuyCovered.has(doc.id))) {
+        await onSignal({
+          symbol: q.code,
+          name: q.name,
+          strategy: doc.name,
+          signalType: "buy",
+          price: q.price,
+          changePct: q.changePct,
+          note: doc.kind === "combo" ? "组合买入信号（已去重子策略）" : "策略买入信号"
+        });
+      }
     }
-    if (sell) {
-      await onSignal({
-        symbol: q.code,
-        name: q.name,
-        strategy: doc.name,
-        signalType: "sell",
-        price: q.price,
-        changePct: q.changePct,
-        note: "策略卖出信号"
-      });
+    if (r.sell) {
+      if (!(doc.kind !== "combo" && comboSellCovered.has(doc.id))) {
+        await onSignal({
+          symbol: q.code,
+          name: q.name,
+          strategy: doc.name,
+          signalType: "sell",
+          price: q.price,
+          changePct: q.changePct,
+          note: doc.kind === "combo" ? "组合卖出信号（已去重子策略）" : "策略卖出信号"
+        });
+      }
     }
   }
 }

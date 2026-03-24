@@ -3,6 +3,18 @@ import vue from "@vitejs/plugin-vue";
 
 export default defineConfig({
   plugins: [vue()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor_vue: ["vue", "vue-router", "pinia"],
+          vendor_ui: ["element-plus", "@element-plus/icons-vue"],
+          vendor_chart: ["echarts"],
+          vendor_pdf: ["jspdf", "jspdf-autotable"]
+        }
+      }
+    }
+  },
   server: {
     port: 5173,
     proxy: {

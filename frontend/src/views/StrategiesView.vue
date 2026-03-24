@@ -34,7 +34,7 @@
           </el-table-column>
           <el-table-column label="操作" width="200" fixed="right">
             <template #default="{ row }">
-              <el-button type="primary" text @click="openEditor(row)">编辑</el-button>
+              <el-button type="primary" text @click="row.kind === 'combo' ? openCombo(row) : openEditor(row)">编辑</el-button>
               <el-button type="danger" text @click="remove(row.id)">删除</el-button>
             </template>
           </el-table-column>
@@ -78,7 +78,7 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="comboVisible" title="新建组合策略" width="520px">
+    <el-dialog v-model="comboVisible" :title="comboEditId ? '编辑组合策略' : '新建组合策略'" width="520px">
       <el-form label-position="top">
         <el-form-item label="名称"><el-input v-model="comboName" /></el-form-item>
         <el-form-item label="逻辑">
@@ -92,6 +92,30 @@
             <el-option v-for="s in indicatorOnly" :key="s.id" :label="s.name" :value="s.id" />
           </el-select>
         </el-form-item>
+        <el-form-item label="触发模式">
+          <el-radio-group v-model="comboTriggerMode">
+            <el-radio-button label="logic">按逻辑</el-radio-button>
+            <el-radio-button label="score">按权重分数</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="comboTriggerMode === 'score'" label="最小触发分数">
+          <el-input-number v-model="comboMinScore" :min="0.1" :step="0.1" :precision="1" />
+        </el-form-item>
+        <el-form-item label="子策略权重与优先级">
+          <el-table :data="comboRefRows" size="small" stripe style="width: 100%">
+            <el-table-column prop="name" label="策略" min-width="140" />
+            <el-table-column label="权重" width="120">
+              <template #default="{ row }">
+                <el-input-number v-model="row.weight" :min="0.1" :step="0.1" :precision="1" />
+              </template>
+            </el-table-column>
+            <el-table-column label="优先级" width="120">
+              <template #default="{ row }">
+                <el-input-number v-model="row.priority" :min="1" :step="1" />
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="comboVisible = false">取消</el-button>
@@ -103,7 +127,7 @@
 
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from "element-plus";
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import {
   deleteStrategyDoc,
   exportFullBackup,
@@ -129,9 +153,13 @@ const editorExpr = ref("");
 const editorDslJson = ref("");
 
 const comboVisible = ref(false);
+const comboEditId = ref<string | null>(null);
 const comboName = ref("");
 const comboLogic = ref<"and" | "or">("and");
 const comboIds = ref<string[]>([]);
+const comboTriggerMode = ref<"logic" | "score">("logic");
+const comboMinScore = ref(1);
+const comboRefRows = ref<Array<{ id: string; name: string; weight: number; priority: number }>>([]);
 
 const indicatorOnly = computed(() => rows.value.filter((r) => r.kind !== "combo"));
 
@@ -221,10 +249,27 @@ async function addFromTemplate(idx: number) {
   ElMessage.success(`已添加模板：${doc.name}`);
 }
 
-function openCombo() {
-  comboName.value = "新组合";
-  comboLogic.value = "and";
-  comboIds.value = [];
+function openCombo(row?: StrategyDoc) {
+  comboEditId.value = row?.kind === "combo" ? row.id : null;
+  comboName.value = row?.kind === "combo" ? row.name : "新组合";
+  comboLogic.value = row?.kind === "combo" ? row.combo?.logic ?? "and" : "and";
+  const ids =
+    row?.kind === "combo"
+      ? row.combo?.strategyRefs?.map((x) => x.id) ?? row.combo?.strategyIds ?? []
+      : [];
+  comboIds.value = [...ids];
+  comboTriggerMode.value = row?.kind === "combo" ? row.combo?.triggerMode ?? "logic" : "logic";
+  comboMinScore.value = row?.kind === "combo" ? row.combo?.minScore ?? 1 : 1;
+  const oldRows = row?.kind === "combo" ? row.combo?.strategyRefs ?? [] : [];
+  comboRefRows.value = ids.map((id, idx) => {
+    const prev = oldRows.find((x) => x.id === id);
+    return {
+      id,
+      name: indicatorOnly.value.find((s) => s.id === id)?.name ?? id,
+      weight: prev?.weight ?? 1,
+      priority: prev?.priority ?? idx + 1
+    };
+  });
   comboVisible.value = true;
 }
 
@@ -234,21 +279,54 @@ async function saveCombo() {
     return;
   }
   const now = Date.now();
+  const old = comboEditId.value ? rows.value.find((r) => r.id === comboEditId.value) : undefined;
   const doc: StrategyDoc = {
-    id: uid(),
+    id: comboEditId.value ?? uid(),
     name: comboName.value.trim(),
     kind: "combo",
     enabled: true,
     schemaVersion: STRATEGY_SCHEMA_VERSION,
-    combo: { logic: comboLogic.value, strategyIds: [...comboIds.value] },
-    createdAt: now,
+    combo: {
+      logic: comboLogic.value,
+      strategyIds: [...comboIds.value],
+      strategyRefs: comboRefRows.value.map((r) => ({
+        id: r.id,
+        weight: r.weight,
+        priority: r.priority
+      })),
+      triggerMode: comboTriggerMode.value,
+      minScore: comboTriggerMode.value === "score" ? comboMinScore.value : undefined
+    },
+    createdAt: old?.createdAt ?? now,
     updatedAt: now
   };
   await saveStrategyDoc(doc);
+  comboEditId.value = null;
   comboVisible.value = false;
   await load();
-  ElMessage.success("组合已保存");
+  ElMessage.success(old ? "组合已更新" : "组合已保存");
 }
+
+watch(
+  comboIds,
+  (ids) => {
+    const keep = new Map(comboRefRows.value.map((r) => [r.id, r]));
+    comboRefRows.value = ids.map((id, idx) => {
+      const old = keep.get(id);
+      const name = indicatorOnly.value.find((s) => s.id === id)?.name ?? id;
+      return {
+        id,
+        name,
+        weight: old?.weight ?? 1,
+        priority: old?.priority ?? idx + 1
+      };
+    });
+    if (comboTriggerMode.value === "score" && comboRefRows.value.length && comboMinScore.value <= 0) {
+      comboMinScore.value = 1;
+    }
+  },
+  { deep: true }
+);
 
 async function doExport() {
   const json = await exportFullBackup();

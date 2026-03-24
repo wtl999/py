@@ -104,14 +104,32 @@ export function evaluateStrategyDoc(
 ): { buy: boolean; sell: boolean } {
   if (depth > 10) return { buy: false, sell: false };
   if (!doc.enabled) return { buy: false, sell: false };
-  if (doc.kind === "combo" && doc.combo?.strategyIds?.length) {
-    const children = doc.combo.strategyIds.map((id) => resolve(id)).filter(Boolean) as StrategyDoc[];
-    if (!children.length) return { buy: false, sell: false };
-    const results = children.map((c) => evaluateStrategyDoc(c, bars, i, resolve, depth + 1));
+  if (doc.kind === "combo" && (doc.combo?.strategyIds?.length || doc.combo?.strategyRefs?.length)) {
+    const refs =
+      doc.combo.strategyRefs?.length
+        ? doc.combo.strategyRefs
+        : doc.combo.strategyIds.map((id, idx) => ({ id, weight: 1, priority: idx + 1 }));
+    const withDoc = refs
+      .map((r, idx) => ({ ref: r, idx, doc: resolve(r.id) }))
+      .filter((x) => x.doc) as Array<{ ref: { id: string; weight?: number; priority?: number }; idx: number; doc: StrategyDoc }>;
+    if (!withDoc.length) return { buy: false, sell: false };
+    withDoc.sort((a, b) => (a.ref.priority ?? a.idx + 1) - (b.ref.priority ?? b.idx + 1));
+    const results = withDoc.map((x) => ({
+      ...evaluateStrategyDoc(x.doc, bars, i, resolve, depth + 1),
+      weight: Number.isFinite(x.ref.weight) ? Number(x.ref.weight) : 1
+    }));
+    const mode = doc.combo.triggerMode ?? "logic";
+    if (mode === "score") {
+      const minScore = Number.isFinite(doc.combo.minScore) ? Number(doc.combo.minScore) : 1;
+      const buyScore = results.reduce((s, r) => s + (r.buy ? r.weight : 0), 0);
+      const sellScore = results.reduce((s, r) => s + (r.sell ? r.weight : 0), 0);
+      return { buy: buyScore >= minScore, sell: sellScore >= minScore };
+    }
     const logic = doc.combo.logic;
-    const buy = logic === "and" ? results.every((r) => r.buy) : results.some((r) => r.buy);
-    const sell = logic === "and" ? results.every((r) => r.sell) : results.some((r) => r.sell);
-    return { buy, sell };
+    return {
+      buy: logic === "and" ? results.every((r) => r.buy) : results.some((r) => r.buy),
+      sell: logic === "and" ? results.every((r) => r.sell) : results.some((r) => r.sell)
+    };
   }
   if (doc.dsl) {
     return evaluateDSL(doc.dsl, bars, i);

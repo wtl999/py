@@ -28,8 +28,14 @@ export interface StrategyDoc {
   enabled: boolean;
   schemaVersion: number;
   dsl?: StrategyDSL;
-  /** 组合：子策略 id 列表 */
-  combo?: { logic: LogicOp; strategyIds: string[] };
+  /** 组合：支持基础与/或、加权打分与优先级 */
+  combo?: {
+    logic: LogicOp;
+    strategyIds?: string[];
+    strategyRefs?: Array<{ id: string; weight?: number; priority?: number }>;
+    triggerMode?: "logic" | "score";
+    minScore?: number;
+  };
   /** 白话文/备注 */
   exprText?: string;
   createdAt: number;
