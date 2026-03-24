@@ -46,13 +46,22 @@
         </el-table-column>
       </el-table>
     </el-card>
+
+    <el-card class="aq-card">
+      <template #header>今日策略触发排行榜（Top 10）</template>
+      <el-table :data="strategyTop" size="small" max-height="260" stripe>
+        <el-table-column type="index" label="#" width="60" />
+        <el-table-column prop="strategy" label="策略" min-width="180" />
+        <el-table-column prop="count" label="触发次数" width="120" />
+      </el-table>
+    </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ElMessage } from "element-plus";
 import { storeToRefs } from "pinia";
-import { onBeforeUnmount, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import { getHistorical } from "../api/client";
 import { executePaperTrade, getPaperFeeRate, listAlerts, listStrategyDocs, saveSignal, type AlertRecord, type SignalRecord } from "../db/idb";
 import { useSettingsStore } from "../stores/settings";
@@ -79,6 +88,13 @@ const barCache = new Map<string, Bar[]>();
 let strategyDocs: StrategyDoc[] = [];
 let alertRows: AlertRecord[] = [];
 const sigStats = ref({ day: "", total: 0, buy: 0, sell: 0, alert: 0 });
+const strategyHitCounter = ref<Record<string, number>>({});
+const strategyTop = computed(() =>
+  Object.entries(strategyHitCounter.value)
+    .map(([strategy, count]) => ({ strategy, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10)
+);
 
 function todayYmd(): string {
   const d = new Date();
@@ -149,11 +165,18 @@ async function onSignal(sig: Omit<SignalRecord, "id" | "time">) {
   if (now - last < 60_000) return;
   signalCooldown.set(cooldownKey, now);
   const ymd = todayYmd();
-  if (sigStats.value.day !== ymd) sigStats.value = { day: ymd, total: 0, buy: 0, sell: 0, alert: 0 };
+  if (sigStats.value.day !== ymd) {
+    sigStats.value = { day: ymd, total: 0, buy: 0, sell: 0, alert: 0 };
+    strategyHitCounter.value = {};
+  }
   sigStats.value.total += 1;
   if (sig.signalType === "buy") sigStats.value.buy += 1;
   else if (sig.signalType === "sell") sigStats.value.sell += 1;
   else sigStats.value.alert += 1;
+  strategyHitCounter.value = {
+    ...strategyHitCounter.value,
+    [sig.strategy]: (strategyHitCounter.value[sig.strategy] ?? 0) + 1
+  };
 
   const saved = await saveSignal(sig);
   if (typeof Notification !== "undefined" && Notification.permission === "granted") {
