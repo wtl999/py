@@ -1,0 +1,39 @@
+:root {
+  --app-bg: radial-gradient(circle at 15% 10%, #eef4ff 0%, #f7faff 36%, #f9fbff 70%, #ffffff 100%);
+  --card-bg: rgba(255, 255, 255, 0.82);
+  --card-border: #e6edff;
+  --text-main: #17203a;
+  --text-sub: #60708f;
+  --brand: #4b7bff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--text-main);
+  background: var(--app-bg);
+}
+
+.aq-card {
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  background: var(--card-bg);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 10px 30px rgba(31, 53, 120, 0.08);
+}
+
+.aq-title {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.aq-subtitle {
+  margin: 0;
+  color: var(--text-sub);
+  font-size: 13px;
+}

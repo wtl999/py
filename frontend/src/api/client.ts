@@ -24,3 +24,8 @@ export async function getSyncStatus(taskId: string) {
   const { data } = await api.get(`/sync/status/${taskId}`);
   return data;
 }
+
+export async function getMarketIndex() {
+  const { data } = await api.get("/market/index");
+  return data;
+}

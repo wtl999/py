@@ -1,70 +1,141 @@
 <template>
-  <el-page-header content="数据同步中心" />
-  <el-card style="margin-top:16px" class="sync-card">
-    <el-form inline class="form-row">
-      <el-form-item label="同步模式">
-        <el-radio-group v-model="syncMode">
-          <el-radio-button label="custom">自定义代码</el-radio-button>
-          <el-radio-button label="all">全市场</el-radio-button>
-        </el-radio-group>
-      </el-form-item>
-      <el-form-item label="股票代码" v-if="syncMode === 'custom'">
-        <el-input v-model="symbols" placeholder="000001,600519" style="width:280px" />
-      </el-form-item>
-      <el-form-item label="增量天数">
-        <el-input-number v-model="days" :min="1" :max="3650" />
-      </el-form-item>
-      <el-form-item label="周期">
-        <el-select v-model="period" style="width:120px">
-          <el-option label="日线" value="daily" />
-          <el-option label="周线" value="weekly" />
-          <el-option label="月线" value="monthly" />
-        </el-select>
-      </el-form-item>
-      <el-button type="primary" @click="start">立即同步</el-button>
-    </el-form>
-    <el-progress :percentage="progress" :status="progress === 100 ? 'success' : undefined" style="margin-top:12px" />
-    <div style="margin-top:8px">状态：{{ statusText }}</div>
-    <el-alert
-      style="margin-top:12px"
-      type="info"
-      :closable="false"
-      title="全市场同步会自动拉取股票列表并逐只同步，首次耗时较长，建议先使用增量天数 120~365。"
-    />
-  </el-card>
+  <div class="page">
+    <div class="head">
+      <h2 class="aq-title">数据同步中心</h2>
+      <p class="aq-subtitle">手动 / 全市场 / 定时增量 — 任务进度由后端推送，前台轮询展示</p>
+    </div>
+
+    <el-card class="aq-card panel">
+      <el-form :inline="true" class="form-row">
+        <el-form-item label="同步模式">
+          <el-radio-group v-model="syncMode">
+            <el-radio-button label="custom">自定义代码</el-radio-button>
+            <el-radio-button label="all">全市场</el-radio-button>
+            <el-radio-button label="watch">自选池</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="syncMode === 'custom'" label="股票代码">
+          <el-input v-model="symbols" placeholder="000001,600519" style="width: 280px" />
+        </el-form-item>
+        <el-form-item label="增量天数">
+          <el-input-number v-model="days" :min="1" :max="3650" />
+        </el-form-item>
+        <el-form-item label="周期">
+          <el-select v-model="period" style="width: 120px">
+            <el-option label="日线" value="daily" />
+            <el-option label="周线" value="weekly" />
+            <el-option label="月线" value="monthly" />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="start">立即同步</el-button>
+        </el-form-item>
+      </el-form>
+      <el-progress :percentage="progress" :status="progress === 100 ? 'success' : undefined" :stroke-width="10" />
+      <div class="status">{{ statusText }}</div>
+      <el-alert class="mt" type="info" :closable="false" title="全市场首次同步耗时较长；自选模式读取本地 IndexedDB 自选列表。" />
+    </el-card>
+
+    <el-card class="aq-card">
+      <template #header>定时同步</template>
+      <el-form :inline="true">
+        <el-form-item label="开启">
+          <el-switch v-model="schedEnabled" @change="saveSched" />
+        </el-form-item>
+        <el-form-item label="每日时间">
+          <el-time-select
+            v-model="schedTime"
+            start="09:00"
+            step="00:30"
+            end="23:30"
+            placeholder="选择时间"
+            @change="saveSched"
+          />
+        </el-form-item>
+        <el-form-item label="说明">
+          <span class="hint">浏览器需保持打开；到点自动按上方「增量天数」与周期提交同步任务。</span>
+        </el-form-item>
+      </el-form>
+    </el-card>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { ElMessage } from "element-plus";
-import { ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import { getSyncStatus, postSync } from "../api/client";
+import { getSetting, listWatchlist, setSetting } from "../db/idb";
 
 const symbols = ref("000001,600519");
 const days = ref(365);
 const period = ref("daily");
-const syncMode = ref<"custom" | "all">("custom");
+const syncMode = ref<"custom" | "all" | "watch">("custom");
 const progress = ref(0);
 const statusText = ref("未开始");
 let timer: number | null = null;
 
-async function start() {
-  try {
-    const payload: Record<string, unknown> = {
-      incremental_days: days.value,
-      period: period.value
-    };
-    if (syncMode.value === "all") {
-      payload.all_listed = true;
-    } else {
-      const list = symbols.value.split(",").map((x) => x.trim()).filter(Boolean);
-      if (!list.length) {
-        ElMessage.warning("请输入至少一个股票代码");
-        return;
-      }
-      payload.symbols = list;
+const schedEnabled = ref(false);
+const schedTime = ref("15:30");
+let schedTimer: number | null = null;
+let lastSchedDay = "";
+
+async function loadSched() {
+  const row = await getSetting<{ enabled?: boolean; hhmm?: string; lastYmd?: string }>("syncSchedule");
+  if (row) {
+    schedEnabled.value = !!row.enabled;
+    if (row.hhmm) schedTime.value = row.hhmm;
+    lastSchedDay = row.lastYmd ?? "";
+  }
+}
+
+async function saveSched() {
+  await setSetting("syncSchedule", {
+    enabled: schedEnabled.value,
+    hhmm: schedTime.value,
+    lastYmd: lastSchedDay
+  });
+  ElMessage.success("定时设置已保存");
+}
+
+async function buildPayload(): Promise<Record<string, unknown> | null> {
+  const payload: Record<string, unknown> = {
+    incremental_days: days.value,
+    period: period.value
+  };
+  if (syncMode.value === "all") {
+    payload.all_listed = true;
+  } else if (syncMode.value === "watch") {
+    const wl = await listWatchlist();
+    const list = wl.map((w) => w.symbol);
+    if (!list.length) {
+      ElMessage.warning("自选为空，请先在选股结果中加自选");
+      return null;
     }
-    const res = await postSync(payload);
+    payload.symbols = list;
+  } else {
+    const list = symbols.value
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+    if (!list.length) {
+      ElMessage.warning("请输入至少一个股票代码");
+      return null;
+    }
+    payload.symbols = list;
+  }
+  return payload;
+}
+
+async function start() {
+  const payload = await buildPayload();
+  if (!payload) return;
+  try {
+    const res = (await postSync(payload)) as { task_id?: string };
     const taskId = res.task_id;
+    if (!taskId) {
+      ElMessage.error("未返回任务 ID");
+      return;
+    }
     statusText.value = `任务 ${taskId} 已提交`;
     progress.value = 0;
 
@@ -84,13 +155,62 @@ async function start() {
     ElMessage.error((e as Error).message || "同步任务启动失败");
   }
 }
+
+function todayYmd(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+async function tickSched() {
+  if (!schedEnabled.value) return;
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  const cur = `${hh}:${mm}`;
+  const ymd = todayYmd();
+  if (cur === schedTime.value && lastSchedDay !== ymd) {
+    lastSchedDay = ymd;
+    await setSetting("syncSchedule", {
+      enabled: schedEnabled.value,
+      hhmm: schedTime.value,
+      lastYmd: lastSchedDay
+    });
+    syncMode.value = "all";
+    await start();
+    ElMessage.success("定时同步已触发");
+  }
+}
+
+onMounted(() => {
+  loadSched();
+  schedTimer = window.setInterval(tickSched, 15_000);
+});
+
+onBeforeUnmount(() => {
+  if (timer) window.clearInterval(timer);
+  if (schedTimer) window.clearInterval(schedTimer);
+});
 </script>
 
 <style scoped>
-.sync-card {
-  border-radius: 12px;
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 .form-row {
-  row-gap: 6px;
+  row-gap: 8px;
+}
+.status {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #64748b;
+}
+.mt {
+  margin-top: 12px;
+}
+.hint {
+  color: #64748b;
+  font-size: 13px;
 }
 </style>

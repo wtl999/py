@@ -2,17 +2,19 @@
   <el-container class="layout">
     <el-aside width="230px" class="side">
       <div class="brand">
-        <div class="brand-title">AI 量化交易</div>
-        <div class="brand-sub">Frontend First</div>
+        <div class="brand-title">AI 量化中枢</div>
+        <div class="brand-sub">All Strategy Logic in Frontend</div>
       </div>
-      <el-menu router :default-active="$route.path">
+      <el-menu router :default-active="$route.path" class="menu">
         <el-menu-item index="/"><el-icon><Odometer /></el-icon>数据看板</el-menu-item>
         <el-menu-item index="/strategies"><el-icon><Setting /></el-icon>策略管理</el-menu-item>
+        <el-menu-item index="/screener"><el-icon><Filter /></el-icon>智能选股</el-menu-item>
         <el-menu-item index="/watch"><el-icon><Bell /></el-icon>实时监听</el-menu-item>
         <el-menu-item index="/sync"><el-icon><Refresh /></el-icon>数据同步</el-menu-item>
         <el-menu-item index="/backtest"><el-icon><TrendCharts /></el-icon>策略回测</el-menu-item>
         <el-menu-item index="/paper"><el-icon><Wallet /></el-icon>模拟交易</el-menu-item>
         <el-menu-item index="/signals"><el-icon><Document /></el-icon>信号日志</el-menu-item>
+        <el-menu-item index="/alerts"><el-icon><Warning /></el-icon>预警中心</el-menu-item>
         <el-menu-item index="/chart"><el-icon><DataLine /></el-icon>K线分析</el-menu-item>
       </el-menu>
     </el-aside>
@@ -25,7 +27,7 @@
 </template>
 
 <script setup lang="ts">
-import { Bell, DataLine, Document, Odometer, Refresh, Setting, TrendCharts, Wallet } from "@element-plus/icons-vue";
+import { Bell, DataLine, Document, Filter, Odometer, Refresh, Setting, TrendCharts, Wallet, Warning } from "@element-plus/icons-vue";
 </script>
 
 <style scoped>
@@ -36,7 +38,7 @@ import { Bell, DataLine, Document, Odometer, Refresh, Setting, TrendCharts, Wall
 
 .side {
   border-right: 1px solid #eef2ff;
-  background: #ffffff;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(249, 252, 255, 0.96) 100%);
 }
 .brand {
   padding: 18px 16px;
@@ -45,7 +47,7 @@ import { Bell, DataLine, Document, Odometer, Refresh, Setting, TrendCharts, Wall
 .brand-title {
   font-size: 18px;
   font-weight: 700;
-  color: #1e293b;
+  color: #213357;
 }
 
 .brand-sub {
@@ -65,5 +67,9 @@ import { Bell, DataLine, Document, Odometer, Refresh, Setting, TrendCharts, Wall
   border-radius: 14px;
   padding: 16px;
   box-shadow: 0 8px 28px rgba(15, 23, 42, 0.04);
+}
+
+.menu {
+  border-right: none;
 }
 </style>

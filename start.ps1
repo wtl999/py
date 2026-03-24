@@ -10,19 +10,19 @@ Write-Host "[AI Quant] 启动后端与前端..." -ForegroundColor Cyan
 $backendCmd = $null
 $venvActivate = Join-Path $Backend ".venv\Scripts\activate.bat"
 if (Test-Path $venvActivate) {
-  $backendCmd = "cd /d `"$Backend`" && call .venv\Scripts\activate.bat && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+  $backendCmd = "cd /d `"`"$Backend`"`" && call .venv\Scripts\activate.bat && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 } elseif (Get-Command py -ErrorAction SilentlyContinue) {
-  $backendCmd = "cd /d `"$Backend`" && py -3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+  $backendCmd = "cd /d `"`"$Backend`"`" && py -3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 } elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
-  $backendCmd = "cd /d `"$Backend`" && python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+  $backendCmd = "cd /d `"`"$Backend`"`" && python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 } else {
-  $backendCmd = "cd /d `"$Backend`" && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+  $backendCmd = "cd /d `"`"$Backend`"`" && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 }
 
 Start-Process cmd -ArgumentList "/k", $backendCmd -WindowStyle Normal
 Start-Sleep -Seconds 1
 
-$frontendCmd = "cd /d `"$Frontend`" && if not exist node_modules npm install && npm run dev"
+$frontendCmd = "cd /d `"`"$Frontend`"`" && if not exist node_modules (npm install) && npm run dev"
 Start-Process cmd -ArgumentList "/k", $frontendCmd -WindowStyle Normal
 
 Write-Host "后端: http://127.0.0.1:8000/docs" -ForegroundColor Green
