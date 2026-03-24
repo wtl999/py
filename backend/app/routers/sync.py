@@ -7,7 +7,7 @@ from app.database import SessionLocal, get_db
 from app.models import StockMeta, SyncTaskRecord
 from app.schemas import SyncRequest, SyncStatus
 from app.services import ak_client
-from app.services.sync_service import create_task, run_sync_job
+from app.services.sync_service import create_task, refresh_stock_meta, run_sync_job
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
@@ -25,6 +25,9 @@ def _resolve_symbols(db: Session, body: SyncRequest) -> list[str]:
         return [s.zfill(6) for s in body.symbols]
     if body.all_listed:
         rows = db.execute(select(StockMeta.symbol)).all()
+        if not rows:
+            refresh_stock_meta(db)
+            rows = db.execute(select(StockMeta.symbol)).all()
         return [r[0] for r in rows]
     rows = db.execute(select(StockMeta.symbol).limit(100)).all()
     return [r[0] for r in rows]
