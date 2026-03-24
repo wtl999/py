@@ -17,7 +17,8 @@ const router = createRouter({
         { path: "paper", name: "paper", component: () => import("../views/PaperView.vue") },
         { path: "signals", name: "signals", component: () => import("../views/SignalsView.vue") },
         { path: "alerts", name: "alerts", component: () => import("../views/AlertsView.vue") },
-        { path: "chart", name: "chart", component: () => import("../views/ChartView.vue") }
+        { path: "chart", name: "chart", component: () => import("../views/ChartView.vue") },
+        { path: "indicator-lab", name: "indicator-lab", component: () => import("../views/IndicatorLabView.vue") }
       ]
     }
   ]

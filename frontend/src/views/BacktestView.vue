@@ -32,6 +32,7 @@
           <el-button type="primary" :loading="loading" @click="run">开始回测</el-button>
           <el-button :disabled="!result.trades.length" @click="exportCsv">导出 CSV</el-button>
           <el-button :disabled="!result.trades.length" @click="exportHtml">导出 HTML 报告</el-button>
+          <el-button :disabled="!result.trades.length" @click="exportPdf">导出 PDF 报告</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -73,10 +74,12 @@
 <script setup lang="ts">
 import { ElMessage } from "element-plus";
 import * as echarts from "echarts";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { getHistorical } from "../api/client";
 import { listStrategyDocs } from "../db/idb";
-import { getBuiltinMacdStrategy, runStrategyBacktest, type BacktestResult } from "../utils/backtest";
+import { getBuiltinMacdStrategy, type BacktestResult } from "../utils/backtest";
 import { downloadCsv } from "../utils/csv";
 import type { Bar } from "../utils/indicators";
 import type { StrategyDoc } from "../utils/strategyTypes";
@@ -91,6 +94,7 @@ const lotSize = ref(100);
 const loading = ref(false);
 const chartRef = ref<HTMLDivElement | null>(null);
 let chart: echarts.ECharts | null = null;
+let worker: Worker | null = null;
 
 const result = reactive<BacktestResult>({
   trades: [],
@@ -133,12 +137,7 @@ async function run() {
       return;
     }
     const st = pickStrategy();
-    const next = runStrategyBacktest(
-      bars,
-      { initCash: initCash.value, feeRate: feeRate.value, lotSize: lotSize.value, slippage: slippage.value },
-      st,
-      resolveStrategy
-    );
+    const next = await runInWorker(bars, st);
     Object.assign(result, next);
     ElMessage.success(`回测完成：${symbol.value}，${next.trades.length} 笔交易`);
     await nextTick();
@@ -148,6 +147,36 @@ async function run() {
   } finally {
     loading.value = false;
   }
+}
+
+function runInWorker(bars: Bar[], strategy: StrategyDoc): Promise<BacktestResult> {
+  if (!worker) {
+    // @ts-ignore Vetur in some environments mis-detects import.meta in SFC
+    worker = new Worker(new URL("../workers/backtestWorker.ts", import.meta.url), { type: "module" });
+  }
+  return new Promise((resolve, reject) => {
+    if (!worker) {
+      reject(new Error("worker init failed"));
+      return;
+    }
+    const onMessage = (ev: MessageEvent<{ type: "done" | "error"; result?: BacktestResult; message?: string }>) => {
+      if (ev.data.type === "done" && ev.data.result) {
+        worker?.removeEventListener("message", onMessage);
+        resolve(ev.data.result);
+      } else if (ev.data.type === "error") {
+        worker?.removeEventListener("message", onMessage);
+        reject(new Error(ev.data.message || "回测 worker 执行失败"));
+      }
+    };
+    worker.addEventListener("message", onMessage);
+    worker.postMessage({
+      type: "run",
+      bars,
+      params: { initCash: initCash.value, feeRate: feeRate.value, lotSize: lotSize.value, slippage: slippage.value },
+      strategy,
+      strategies: strategyList.value
+    });
+  });
 }
 
 function renderChart() {
@@ -202,6 +231,26 @@ function exportHtml() {
   ElMessage.success("HTML 已导出");
 }
 
+function exportPdf() {
+  const doc = new jsPDF({ orientation: "p", unit: "pt", format: "a4" });
+  doc.setFontSize(16);
+  doc.text(`Backtest Report: ${symbol.value}`, 40, 44);
+  doc.setFontSize(11);
+  doc.text(
+    `Return ${(result.totalReturn * 100).toFixed(2)}% | MaxDD ${(result.maxDrawdown * 100).toFixed(2)}% | Win ${(result.winRate * 100).toFixed(2)}% | Sharpe ${result.sharpeApprox.toFixed(2)}`,
+    40,
+    66
+  );
+  autoTable(doc, {
+    startY: 84,
+    head: [["Date", "Side", "Price", "Qty", "Fee", "Equity"]],
+    body: result.trades.map((t) => [t.date, t.side, String(t.price), String(t.quantity), String(t.fee), String(t.equityAfter)]),
+    styles: { fontSize: 8, cellPadding: 3 }
+  });
+  doc.save(`backtest_${symbol.value}_${Date.now()}.pdf`);
+  ElMessage.success("PDF 已导出");
+}
+
 watch(
   () => result.equityCurve,
   () => nextTick(() => renderChart()),
@@ -216,6 +265,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   chart?.dispose();
   chart = null;
+  worker?.terminate();
+  worker = null;
 });
 </script>
 

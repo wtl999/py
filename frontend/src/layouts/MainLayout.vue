@@ -16,6 +16,7 @@
         <el-menu-item index="/signals"><el-icon><Document /></el-icon>信号日志</el-menu-item>
         <el-menu-item index="/alerts"><el-icon><Warning /></el-icon>预警中心</el-menu-item>
         <el-menu-item index="/chart"><el-icon><DataLine /></el-icon>K线分析</el-menu-item>
+        <el-menu-item index="/indicator-lab"><el-icon><DataLine /></el-icon>指标校验</el-menu-item>
       </el-menu>
     </el-aside>
     <el-main class="main">
