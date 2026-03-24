@@ -8,6 +8,11 @@ export interface BacktestParams {
   lotSize: number;
   /** 滑点比例，如 0.001 表示 0.1% */
   slippage: number;
+  positionMode?: "fixed_qty" | "fixed_ratio" | "kelly";
+  fixedQty?: number;
+  fixedRatio?: number;
+  kellyWinRate?: number;
+  kellyWinLossRatio?: number;
 }
 
 export interface BacktestTrade {
@@ -30,6 +35,31 @@ export interface BacktestResult {
 
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, n));
+}
+
+function calcTargetQty(cash: number, p: number, feeRate: number, lotSize: number, params: BacktestParams): number {
+  const mode = params.positionMode ?? "fixed_qty";
+  let budget = cash;
+  if (mode === "fixed_ratio") {
+    const ratio = clamp(params.fixedRatio ?? 0.5, 0.01, 1);
+    budget = cash * ratio;
+  } else if (mode === "kelly") {
+    const w = clamp(params.kellyWinRate ?? 0.55, 0.01, 0.99);
+    const b = clamp(params.kellyWinLossRatio ?? 1.2, 0.1, 10);
+    const f = clamp(w - (1 - w) / b, 0.05, 1);
+    budget = cash * f;
+  } else {
+    const qty = Math.max(0, Math.floor((params.fixedQty ?? lotSize) / lotSize) * lotSize);
+    const cost = qty * p * (1 + feeRate);
+    if (qty > 0 && cost <= cash) return qty;
+    budget = cash;
+  }
+  const canBuy = Math.floor(budget / (p * (1 + feeRate)));
+  return Math.max(0, Math.floor(canBuy / lotSize) * lotSize);
 }
 
 export function getBuiltinMacdStrategy(): StrategyDoc {
@@ -81,8 +111,7 @@ export function runStrategyBacktest(
 
     if (buy && qty === 0) {
       const p = round2(rawP * slipBuy);
-      const canBuy = Math.floor(cash / (p * (1 + params.feeRate)));
-      const buyQty = Math.floor(canBuy / params.lotSize) * params.lotSize;
+      const buyQty = calcTargetQty(cash, p, params.feeRate, params.lotSize, params);
       if (buyQty > 0) {
         const amount = buyQty * p;
         const fee = amount * params.feeRate;

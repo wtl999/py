@@ -34,6 +34,25 @@
         <el-form-item label="每手股数">
           <el-input-number v-model="lotSize" :min="1" :step="100" />
         </el-form-item>
+        <el-form-item label="仓位模式">
+          <el-select v-model="positionMode" style="width: 150px">
+            <el-option label="固定股数" value="fixed_qty" />
+            <el-option label="固定比例" value="fixed_ratio" />
+            <el-option label="凯利近似" value="kelly" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="positionMode === 'fixed_qty'" label="固定买入股数">
+          <el-input-number v-model="fixedQty" :min="1" :step="100" />
+        </el-form-item>
+        <el-form-item v-if="positionMode === 'fixed_ratio'" label="仓位比例">
+          <el-input-number v-model="fixedRatio" :min="0.01" :max="1" :step="0.05" :precision="2" />
+        </el-form-item>
+        <el-form-item v-if="positionMode === 'kelly'" label="凯利胜率">
+          <el-input-number v-model="kellyWinRate" :min="0.01" :max="0.99" :step="0.01" :precision="2" />
+        </el-form-item>
+        <el-form-item v-if="positionMode === 'kelly'" label="盈亏比">
+          <el-input-number v-model="kellyWinLossRatio" :min="0.1" :max="10" :step="0.1" :precision="2" />
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" :loading="loading" @click="run">开始回测</el-button>
           <el-button :disabled="!result.trades.length" @click="exportCsv">导出 CSV</el-button>
@@ -121,6 +140,11 @@ const initCash = ref(1_000_000);
 const feeRate = ref(0.0003);
 const slippage = ref(0.0005);
 const lotSize = ref(100);
+const positionMode = ref<"fixed_qty" | "fixed_ratio" | "kelly">("fixed_qty");
+const fixedQty = ref(1000);
+const fixedRatio = ref(0.5);
+const kellyWinRate = ref(0.55);
+const kellyWinLossRatio = ref(1.2);
 const loading = ref(false);
 const chartRef = ref<HTMLDivElement | null>(null);
 let chart: echarts.ECharts | null = null;
@@ -221,7 +245,17 @@ function runInWorker(bars: Bar[], strategy: StrategyDoc): Promise<BacktestResult
     worker.postMessage({
       type: "run",
       bars,
-      params: { initCash: initCash.value, feeRate: feeRate.value, lotSize: lotSize.value, slippage: slippage.value },
+      params: {
+        initCash: initCash.value,
+        feeRate: feeRate.value,
+        lotSize: lotSize.value,
+        slippage: slippage.value,
+        positionMode: positionMode.value,
+        fixedQty: fixedQty.value,
+        fixedRatio: fixedRatio.value,
+        kellyWinRate: kellyWinRate.value,
+        kellyWinLossRatio: kellyWinLossRatio.value
+      },
       strategy,
       strategies: strategyList.value
     });

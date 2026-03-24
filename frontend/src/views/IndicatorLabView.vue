@@ -20,6 +20,7 @@
           <el-button type="primary" :loading="loading" @click="run">计算并校验</el-button>
           <el-button :disabled="!rows.length" @click="exportCsv">导出快照CSV</el-button>
           <el-button :disabled="!compareRows.length" @click="exportComparePdf">导出对照PDF</el-button>
+          <el-button @click="downloadBenchmarkTemplate">下载对照模板CSV</el-button>
         </el-form-item>
       </el-form>
       <el-alert
@@ -184,6 +185,16 @@ function exportComparePdf() {
   });
   doc.save(`indicator_compare_${symbol.value}_${Date.now()}.pdf`);
   ElMessage.success("对照 PDF 已导出");
+}
+
+function downloadBenchmarkTemplate() {
+  const headers = ["date", "ma5", "ma20", "dif", "dea", "macd", "rsi14", "k", "d", "j"];
+  const rows = [
+    ["2024-12-02", "1720.11", "1691.20", "12.30", "10.50", "3.60", "56.20", "61.10", "58.00", "67.20"],
+    ["2024-12-03", "1728.45", "1696.03", "13.10", "11.02", "4.16", "58.74", "63.21", "59.74", "70.15"]
+  ];
+  downloadCsv(`indicator_benchmark_template_${Date.now()}.csv`, headers, rows);
+  ElMessage.success("模板 CSV 已下载");
 }
 </script>
 

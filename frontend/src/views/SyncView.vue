@@ -52,8 +52,18 @@
             @change="saveSched"
           />
         </el-form-item>
+        <el-form-item label="定时模式">
+          <el-radio-group v-model="schedMode" @change="saveSched">
+            <el-radio-button label="custom">自定义</el-radio-button>
+            <el-radio-button label="all">全市场</el-radio-button>
+            <el-radio-button label="watch">自选池</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="定时增量天数">
+          <el-input-number v-model="schedDays" :min="1" :max="3650" @change="saveSched" />
+        </el-form-item>
         <el-form-item label="说明">
-          <span class="hint">浏览器需保持打开；到点自动按上方「增量天数」与周期提交同步任务。</span>
+          <span class="hint">浏览器需保持打开；到点按定时模式与定时增量天数提交任务。</span>
         </el-form-item>
       </el-form>
     </el-card>
@@ -76,14 +86,18 @@ let timer: number | null = null;
 
 const schedEnabled = ref(false);
 const schedTime = ref("15:30");
+const schedMode = ref<"custom" | "all" | "watch">("all");
+const schedDays = ref(365);
 let schedTimer: number | null = null;
 let lastSchedDay = "";
 
 async function loadSched() {
-  const row = await getSetting<{ enabled?: boolean; hhmm?: string; lastYmd?: string }>("syncSchedule");
+  const row = await getSetting<{ enabled?: boolean; hhmm?: string; lastYmd?: string; mode?: "custom" | "all" | "watch"; days?: number }>("syncSchedule");
   if (row) {
     schedEnabled.value = !!row.enabled;
     if (row.hhmm) schedTime.value = row.hhmm;
+    if (row.mode) schedMode.value = row.mode;
+    if (typeof row.days === "number" && row.days > 0) schedDays.value = row.days;
     lastSchedDay = row.lastYmd ?? "";
   }
 }
@@ -92,19 +106,21 @@ async function saveSched() {
   await setSetting("syncSchedule", {
     enabled: schedEnabled.value,
     hhmm: schedTime.value,
+    mode: schedMode.value,
+    days: schedDays.value,
     lastYmd: lastSchedDay
   });
   ElMessage.success("定时设置已保存");
 }
 
-async function buildPayload(): Promise<Record<string, unknown> | null> {
+async function buildPayload(mode = syncMode.value, incrDays = days.value): Promise<Record<string, unknown> | null> {
   const payload: Record<string, unknown> = {
-    incremental_days: days.value,
+    incremental_days: incrDays,
     period: period.value
   };
-  if (syncMode.value === "all") {
+  if (mode === "all") {
     payload.all_listed = true;
-  } else if (syncMode.value === "watch") {
+  } else if (mode === "watch") {
     const wl = await listWatchlist();
     const list = wl.map((w) => w.symbol);
     if (!list.length) {
@@ -173,10 +189,33 @@ async function tickSched() {
     await setSetting("syncSchedule", {
       enabled: schedEnabled.value,
       hhmm: schedTime.value,
+      mode: schedMode.value,
+      days: schedDays.value,
       lastYmd: lastSchedDay
     });
-    syncMode.value = "all";
-    await start();
+    const payload = await buildPayload(schedMode.value, schedDays.value);
+    if (!payload) return;
+    try {
+      const res = (await postSync(payload)) as { task_id?: string };
+      const taskId = res.task_id;
+      if (!taskId) return;
+      statusText.value = `任务 ${taskId} 已提交`;
+      progress.value = 0;
+      if (timer) window.clearInterval(timer);
+      timer = window.setInterval(async () => {
+        const s = await getSyncStatus(taskId);
+        const total = s.total || 0;
+        const done = s.done || 0;
+        progress.value = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
+        statusText.value = `${s.status} | ${done}/${total} | 失败 ${s.failed}`;
+        if (["done", "done_with_errors", "unknown"].includes(s.status)) {
+          if (timer) window.clearInterval(timer);
+          timer = null;
+        }
+      }, 1500);
+    } catch {
+      /* ignore in scheduler */
+    }
     ElMessage.success("定时同步已触发");
   }
 }
