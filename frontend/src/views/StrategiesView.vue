@@ -55,6 +55,30 @@
             </el-upload>
           </el-space>
         </el-card>
+        <el-card class="aq-card inner mt">
+          <template #header>AI 白话文解析插件</template>
+          <el-form label-position="top">
+            <el-form-item label="启用 AI 解析（保存白话文策略时优先使用）">
+              <el-switch v-model="aiCfg.enabled" />
+            </el-form-item>
+            <el-form-item label="接口地址（OpenAI 兼容）">
+              <el-input v-model="aiCfg.endpoint" placeholder="http://127.0.0.1:11434/v1/chat/completions" />
+            </el-form-item>
+            <el-form-item label="模型">
+              <el-input v-model="aiCfg.model" placeholder="qwen2.5:7b" />
+            </el-form-item>
+            <el-form-item label="API Key（可选）">
+              <el-input v-model="aiCfg.apiKey" show-password placeholder="可留空" />
+            </el-form-item>
+            <el-form-item label="超时毫秒">
+              <el-input-number v-model="aiCfg.timeoutMs" :min="1000" :max="30000" :step="500" />
+            </el-form-item>
+            <el-space>
+              <el-button @click="saveAiCfg">保存 AI 设置</el-button>
+              <el-button @click="testAiParse">测试解析</el-button>
+            </el-space>
+          </el-form>
+        </el-card>
       </el-tab-pane>
     </el-tabs>
 
@@ -68,10 +92,18 @@
             <el-option label="白话文" value="nl" />
           </el-select>
         </el-form-item>
-        <el-form-item label="白话文/备注（可选）"><el-input v-model="editorExpr" type="textarea" :rows="2" /></el-form-item>
-        <el-form-item label="DSL（JSON）">
+        <el-form-item :label="editorKind === 'nl' ? '白话文策略（例如：帮我选出来5天内有涨停的）' : '白话文/备注（可选）'">
+          <el-input v-model="editorExpr" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item v-if="editorKind !== 'nl'" label="DSL（JSON）">
           <el-input v-model="editorDslJson" type="textarea" :rows="12" class="mono" placeholder='{"version":1,"logic":"and","conditions":[...]}' />
         </el-form-item>
+        <el-alert
+          v-if="editorKind === 'nl'"
+          type="info"
+          :closable="false"
+          title="白话文策略无需填写 DSL。示例：5天内有涨停；近20个交易日没有跌破5日均线；MACD金叉且RSI小于30；放量1.8倍且突破布林上轨（支持同花顺/通达信常用指标口令）。"
+        />
       </el-form>
       <template #footer>
         <el-button @click="editorVisible = false">取消</el-button>
@@ -142,6 +174,7 @@ import {
   type StrategyDoc,
   type StrategyDSL
 } from "../utils/strategyTypes";
+import { getAiParserConfig, parseNlByAiPlugin, setAiParserConfig } from "../utils/nlParserPlugins";
 
 const TEMPLATE_STRATEGIES = STRATEGY_TEMPLATES;
 
@@ -161,6 +194,7 @@ const comboIds = ref<string[]>([]);
 const comboTriggerMode = ref<"logic" | "score">("logic");
 const comboMinScore = ref(1);
 const comboRefRows = ref<Array<{ id: string; name: string; weight: number; priority: number }>>([]);
+const aiCfg = ref(getAiParserConfig());
 
 const indicatorOnly = computed(() => rows.value.filter((r) => r.kind !== "combo"));
 
@@ -194,17 +228,41 @@ function openEditor(row?: StrategyDoc) {
   editorName.value = row?.name ?? "新策略";
   editorKind.value = row?.kind ?? "indicator";
   editorExpr.value = row?.exprText ?? "";
-  editorDslJson.value = JSON.stringify(row?.dsl ?? defaultDsl(), null, 2);
+  editorDslJson.value = row?.dsl ? JSON.stringify(row.dsl, null, 2) : JSON.stringify(defaultDsl(), null, 2);
   editorVisible.value = true;
 }
 
 async function saveEditor() {
-  let dsl: StrategyDSL | undefined;
-  try {
-    dsl = JSON.parse(editorDslJson.value) as StrategyDSL;
-  } catch {
-    ElMessage.error("DSL JSON 格式错误");
+  let dsl: StrategyDSL | undefined = undefined;
+  if (editorKind.value !== "nl") {
+    try {
+      dsl = JSON.parse(editorDslJson.value) as StrategyDSL;
+    } catch {
+      ElMessage.error("DSL JSON 格式错误");
+      return;
+    }
+  } else if (editorDslJson.value.trim()) {
+    try {
+      dsl = JSON.parse(editorDslJson.value) as StrategyDSL;
+    } catch {
+      dsl = undefined;
+    }
+  }
+  if (!editorName.value.trim()) {
+    ElMessage.warning("请填写策略名称");
     return;
+  }
+  if (editorKind.value === "nl" && !editorExpr.value.trim() && !dsl) {
+    ElMessage.warning("白话文策略请至少填写一句话");
+    return;
+  }
+  if (editorKind.value === "nl" && editorExpr.value.trim()) {
+    const aiDsl = await parseNlByAiPlugin(editorExpr.value.trim(), aiCfg.value);
+    if (aiDsl) {
+      dsl = aiDsl;
+      editorDslJson.value = JSON.stringify(aiDsl, null, 2);
+      ElMessage.success("AI 解析成功，已自动生成 DSL");
+    }
   }
   const now = Date.now();
   const doc: StrategyDoc = {
@@ -379,6 +437,22 @@ async function onImportReplace(ev: { raw?: File }) {
   await importFullBackup(text, "replace");
   await load();
   ElMessage.success("已覆盖导入");
+}
+
+function saveAiCfg() {
+  setAiParserConfig(aiCfg.value);
+  ElMessage.success("AI 解析设置已保存");
+}
+
+async function testAiParse() {
+  const sample = editorExpr.value.trim() || "近20个交易日没有跌破5日均线且最近5天出现过涨停";
+  const dsl = await parseNlByAiPlugin(sample, aiCfg.value);
+  if (!dsl) {
+    ElMessage.warning("AI 解析未命中，请检查接口地址/模型/API Key");
+    return;
+  }
+  editorDslJson.value = JSON.stringify(dsl, null, 2);
+  ElMessage.success("AI 解析测试成功");
 }
 
 onMounted(load);

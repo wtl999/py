@@ -7,11 +7,32 @@
 
     <el-card class="aq-card panel">
       <el-form :inline="true">
-        <el-form-item label="标的代码">
-          <el-input v-model="symbol" style="width: 120px" />
+        <el-form-item label="标的">
+          <el-select-v2
+            v-model="symbol"
+            filterable
+            clearable
+            placeholder="请选择股票"
+            :options="stockSelectOptions"
+            style="width: 260px"
+          />
         </el-form-item>
-        <el-form-item label="批量标的(逗号分隔)">
-          <el-input v-model="batchSymbols" style="width: 240px" placeholder="000001,600519,300750" />
+        <el-form-item label="批量标的">
+          <el-select-v2
+            v-model="batchSymbols"
+            multiple
+            filterable
+            clearable
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="为空时按单标的回测"
+            :options="stockSelectOptions"
+            style="width: 360px"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-button size="small" @click="selectAllBatch">全选</el-button>
+          <el-button size="small" @click="clearBatch">清空</el-button>
         </el-form-item>
         <el-form-item label="策略">
           <el-select v-model="strategyId" filterable style="width: 200px">
@@ -65,6 +86,7 @@
           <el-button :disabled="!compareResults.length" @click="exportComparePdf">导出对比 PDF</el-button>
           <el-button :disabled="!compareResults.length" @click="exportChartPng">导出曲线 PNG</el-button>
           <el-button :disabled="!batchResults.length" @click="exportBatchCsv">导出批量排名 CSV</el-button>
+          <el-button :disabled="!matrixRows.length" @click="exportMatrixCsv">导出矩阵 CSV</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -127,6 +149,14 @@
       </el-table>
     </el-card>
 
+    <el-card class="aq-card table-card" v-if="matrixRows.length">
+      <template #header>多策略 × 多标的二维矩阵（收益率%）</template>
+      <el-table :data="matrixRows" size="small" stripe max-height="360">
+        <el-table-column prop="symbol" label="代码" width="100" fixed="left" />
+        <el-table-column v-for="c in matrixCols" :key="c" :prop="c" :label="c" width="120" />
+      </el-table>
+    </el-card>
+
     <el-card class="aq-card table-card">
       <template #header>交易明细（{{ result.trades.length }} 笔）</template>
       <el-table :data="result.trades" size="small" max-height="420" stripe>
@@ -146,8 +176,8 @@ import { ElMessage } from "element-plus";
 import * as echarts from "echarts";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
-import { getHistorical } from "../api/client";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { getHistorical, getStockList } from "../api/client";
 import { listStrategyDocs } from "../db/idb";
 import { getBuiltinMacdStrategy, type BacktestResult } from "../utils/backtest";
 import { downloadCsv } from "../utils/csv";
@@ -155,7 +185,9 @@ import type { Bar } from "../utils/indicators";
 import type { StrategyDoc } from "../utils/strategyTypes";
 
 const symbol = ref("600519");
-const batchSymbols = ref("");
+const batchSymbols = ref<string[]>([]);
+const stockOptions = ref<Array<{ value: string; label: string; name: string }>>([]);
+const stockSelectOptions = computed(() => stockOptions.value);
 const strategyId = ref("__macd__");
 const compareIds = ref<string[]>([]);
 const strategyList = ref<StrategyDoc[]>([]);
@@ -174,6 +206,8 @@ let chart: echarts.ECharts | null = null;
 let worker: Worker | null = null;
 const compareResults = ref<Array<BacktestResult & { id: string; name: string }>>([]);
 const batchResults = ref<Array<BacktestResult & { symbol: string; strategyName: string }>>([]);
+const matrixRows = ref<Array<Record<string, string | number>>>([]);
+const matrixCols = ref<string[]>([]);
 
 const result = reactive<BacktestResult>({
   trades: [],
@@ -204,44 +238,83 @@ function nameOfStrategy(id: string): string {
   return resolveStrategy(id)?.name ?? id;
 }
 
+async function loadStockOptions() {
+  try {
+    const rows = (await getStockList()) as Array<{ symbol: string; name: string }>;
+    stockOptions.value = rows
+      .map((r) => {
+        const symbol = String(r.symbol).padStart(6, "0");
+        const name = String(r.name ?? "");
+        return { value: symbol, label: `${name || "未知名称"} (${symbol})`, name };
+      })
+      .filter((r) => /^\d{6}$/.test(r.value));
+  } catch {
+    stockOptions.value = [];
+  }
+}
+
+function selectAllBatch() {
+  if (!stockOptions.value.length) {
+    ElMessage.warning("股票列表尚未加载完成");
+    return;
+  }
+  batchSymbols.value = stockOptions.value.map((s) => s.value);
+}
+
+function clearBatch() {
+  batchSymbols.value = [];
+}
+
 async function run() {
   loading.value = true;
   try {
-    const list = (batchSymbols.value.trim() ? batchSymbols.value : symbol.value)
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const list = batchSymbols.value.length ? batchSymbols.value : [symbol.value];
     const uniqSymbols = Array.from(new Set(list));
     if (!uniqSymbols.length) {
       ElMessage.warning("请至少输入一个标的");
       return;
     }
     if (uniqSymbols.length > 1) {
-      const st = strategyId.value === "__macd__" ? getBuiltinMacdStrategy() : resolveStrategy(strategyId.value);
-      if (!st) {
+      const matrixIds = Array.from(new Set([strategyId.value, ...compareIds.value]));
+      const matrixStrategies = matrixIds
+        .map((id) => ({ id, doc: id === "__macd__" ? getBuiltinMacdStrategy() : resolveStrategy(id) }))
+        .filter((x) => x.doc) as Array<{ id: string; doc: StrategyDoc }>;
+      if (!matrixStrategies.length) {
         ElMessage.warning("当前策略不存在");
         return;
       }
+      matrixCols.value = matrixStrategies.map((x) => x.doc.name);
+      const mat: Array<Record<string, string | number>> = [];
       const out: Array<BacktestResult & { symbol: string; strategyName: string }> = [];
       for (const sym of uniqSymbols) {
         const bars = await fetchBars(sym);
         if (!bars || bars.length < 60) continue;
-        const one = await runInWorker(bars, st);
-        out.push({ ...one, symbol: sym, strategyName: st.name });
+        const row: Record<string, string | number> = { symbol: sym };
+        for (const st of matrixStrategies) {
+          const one = await runInWorker(bars, st.doc);
+          row[st.doc.name] = Number((one.totalReturn * 100).toFixed(2));
+          if (st.id === strategyId.value) {
+            out.push({ ...one, symbol: sym, strategyName: st.doc.name });
+          }
+        }
+        mat.push(row);
       }
       out.sort((a, b) => b.totalReturn - a.totalReturn);
       batchResults.value = out;
+      matrixRows.value = mat;
       if (out.length) {
         symbol.value = out[0].symbol;
         Object.assign(result, out[0]);
       }
       compareResults.value = [];
-      ElMessage.success(`批量回测完成：${out.length} 只标的`);
+      ElMessage.success(`二维回测完成：${mat.length} 只标的 × ${matrixStrategies.length} 策略`);
       await nextTick();
       renderChart();
       return;
     }
     batchResults.value = [];
+    matrixRows.value = [];
+    matrixCols.value = [];
     const bars = await fetchBars(symbol.value);
     if (!bars || bars.length < 60) {
       ElMessage.warning("数据太少，至少需要约 60 根K线");
@@ -403,6 +476,14 @@ function exportBatchCsv() {
   ElMessage.success("批量排名 CSV 已导出");
 }
 
+function exportMatrixCsv() {
+  if (!matrixRows.value.length || !matrixCols.value.length) return;
+  const headers = ["symbol", ...matrixCols.value];
+  const rows = matrixRows.value.map((r) => headers.map((h) => (r[h] ?? "") as string | number));
+  downloadCsv(`backtest_matrix_${Date.now()}.csv`, headers, rows);
+  ElMessage.success("二维矩阵 CSV 已导出");
+}
+
 function exportHtml() {
   const rows = result.trades
     .map(
@@ -488,6 +569,7 @@ watch(
 
 onMounted(async () => {
   strategyList.value = await listStrategyDocs();
+  await loadStockOptions();
   window.addEventListener("resize", () => chart?.resize());
 });
 

@@ -1,7 +1,8 @@
 import json
 import sqlite3
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+import warnings
 
 import akshare as ak
 import pandas as pd
@@ -27,7 +28,7 @@ def norm_rows(df: pd.DataFrame, symbol: str) -> list[tuple]:
         d = df.reset_index().rename(columns={"index": "date"})
     out: list[tuple] = []
     cutoff = (datetime.now().date() - timedelta(days=DAYS)).strftime("%Y%m%d")
-    created_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    created_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
     for _, r in d.iterrows():
         ds = str(r.get("date", "")).replace("-", "")[:8]
         if not ds or ds < cutoff:
@@ -68,6 +69,7 @@ def save_progress(done: int, total: int, ok: int, fail: int, current: str, last_
 
 
 def main() -> None:
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
     stock_df = ak.stock_info_a_code_name()
     code_col = "code" if "code" in stock_df.columns else stock_df.columns[0]
     symbols = [str(x).zfill(6) for x in stock_df[code_col].tolist()]
@@ -75,6 +77,12 @@ def main() -> None:
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
+    cutoff = (datetime.now().date() - timedelta(days=DAYS)).strftime("%Y%m%d")
+    done_rows = cur.execute(
+        "select symbol from kline_bars where period=? and trade_date>=? group by symbol",
+        (PERIOD, cutoff),
+    ).fetchall()
+    done_symbols = {r[0] for r in done_rows}
     sql = """
     INSERT INTO kline_bars
     (symbol, period, trade_date, open, high, low, close, volume, amount, created_at)
@@ -92,6 +100,13 @@ def main() -> None:
     fail = 0
     done = 0
     for sym in symbols:
+        if sym in done_symbols:
+            done += 1
+            ok += 1
+            if done % 50 == 0 or done == total:
+                print(f"[seed] {done}/{total} ok={ok} fail={fail} current={sym} (skip)", flush=True)
+            save_progress(done, total, ok, fail, sym, "")
+            continue
         err = ""
         try:
             df = ak.stock_zh_a_daily(symbol=market_symbol(sym), adjust="qfq")
@@ -107,7 +122,7 @@ def main() -> None:
         if done % 10 == 0 or done == total:
             print(f"[seed] {done}/{total} ok={ok} fail={fail} current={sym}", flush=True)
         save_progress(done, total, ok, fail, sym, err)
-        time.sleep(0.08)
+        time.sleep(0.03)
 
     conn.close()
     print(f"[seed] DONE total={total} ok={ok} fail={fail}", flush=True)

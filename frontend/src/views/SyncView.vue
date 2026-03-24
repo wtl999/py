@@ -15,7 +15,21 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="syncMode === 'custom'" label="股票代码">
-          <el-input v-model="symbols" placeholder="000001,600519" style="width: 280px" />
+          <el-select-v2
+            v-model="selectedSymbols"
+            multiple
+            filterable
+            clearable
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="请选择股票"
+            :options="stockSelectOptions"
+            style="width: 380px"
+          />
+        </el-form-item>
+        <el-form-item v-if="syncMode === 'custom'">
+          <el-button size="small" @click="selectAllSymbols">全选</el-button>
+          <el-button size="small" @click="clearSymbols">清空</el-button>
         </el-form-item>
         <el-form-item label="增量天数">
           <el-input-number v-model="days" :min="1" :max="3650" />
@@ -72,11 +86,13 @@
 
 <script setup lang="ts">
 import { ElMessage } from "element-plus";
-import { onBeforeUnmount, onMounted, ref } from "vue";
-import { getSyncStatus, postSync } from "../api/client";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { getStockList, getSyncStatus, postSync } from "../api/client";
 import { getSetting, listWatchlist, setSetting } from "../db/idb";
 
-const symbols = ref("000001,600519");
+const selectedSymbols = ref<string[]>(["000001", "600519"]);
+const stockOptions = ref<Array<{ value: string; label: string; name: string }>>([]);
+const stockSelectOptions = computed(() => stockOptions.value);
 const days = ref(365);
 const period = ref("daily");
 const syncMode = ref<"custom" | "all" | "watch">("custom");
@@ -100,6 +116,33 @@ async function loadSched() {
     if (typeof row.days === "number" && row.days > 0) schedDays.value = row.days;
     lastSchedDay = row.lastYmd ?? "";
   }
+}
+
+async function loadStockOptions() {
+  try {
+    const rows = (await getStockList()) as Array<{ symbol: string; name: string }>;
+    stockOptions.value = rows
+      .map((r) => {
+        const symbol = String(r.symbol).padStart(6, "0");
+        const name = String(r.name ?? "");
+        return { value: symbol, label: `${name || "未知名称"} (${symbol})`, name };
+      })
+      .filter((r) => /^\d{6}$/.test(r.value));
+  } catch {
+    stockOptions.value = [];
+  }
+}
+
+function selectAllSymbols() {
+  if (!stockOptions.value.length) {
+    ElMessage.warning("股票列表尚未加载完成");
+    return;
+  }
+  selectedSymbols.value = stockOptions.value.map((s) => s.value);
+}
+
+function clearSymbols() {
+  selectedSymbols.value = [];
 }
 
 async function saveSched() {
@@ -129,12 +172,9 @@ async function buildPayload(mode = syncMode.value, incrDays = days.value): Promi
     }
     payload.symbols = list;
   } else {
-    const list = symbols.value
-      .split(",")
-      .map((x) => x.trim())
-      .filter(Boolean);
+    const list = selectedSymbols.value.map((x) => x.trim()).filter(Boolean);
     if (!list.length) {
-      ElMessage.warning("请输入至少一个股票代码");
+      ElMessage.warning("请选择至少一只股票");
       return null;
     }
     payload.symbols = list;
@@ -222,6 +262,7 @@ async function tickSched() {
 
 onMounted(() => {
   loadSched();
+  void loadStockOptions();
   schedTimer = window.setInterval(tickSched, 15_000);
 });
 

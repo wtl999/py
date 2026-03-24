@@ -8,9 +8,15 @@ export type LogicOp = "and" | "or";
 
 export type Condition =
   | { type: "macd_cross"; direction: "golden" | "death" }
+  | { type: "macd_zone"; zone: "above_zero" | "below_zero" }
   | { type: "ma_cross"; fast: number; slow: number; direction?: "golden" | "death" }
+  | { type: "price_ma"; period: number; op: "above" | "below" }
   | { type: "rsi"; period: number; op: "gt" | "lt"; value: number }
   | { type: "kdj_j"; op: "gt" | "lt"; value: number }
+  | { type: "boll_break"; period: number; mult: number; direction: "up" | "down" }
+  | { type: "vol_ratio"; period: number; minRatio: number }
+  | { type: "limit_up_within"; lookback: number; thresholdPct?: number }
+  | { type: "ma_not_below"; maPeriod: number; lookback: number; useClose?: boolean }
   | { type: "pattern"; id: "three_white_soldiers" | "long_lower_shadow"; lookback: number };
 
 export interface StrategyDSL {
@@ -68,6 +74,28 @@ export const TEMPLATE_STRATEGIES: Omit<StrategyDoc, "id" | "createdAt" | "update
     }
   },
   {
+    name: "5天内有涨停",
+    kind: "indicator",
+    enabled: true,
+    schemaVersion: STRATEGY_SCHEMA_VERSION,
+    dsl: {
+      version: STRATEGY_SCHEMA_VERSION,
+      logic: "and",
+      conditions: [{ type: "limit_up_within", lookback: 5, thresholdPct: 9.8 }]
+    }
+  },
+  {
+    name: "近20日不破MA5",
+    kind: "indicator",
+    enabled: true,
+    schemaVersion: STRATEGY_SCHEMA_VERSION,
+    dsl: {
+      version: STRATEGY_SCHEMA_VERSION,
+      logic: "and",
+      conditions: [{ type: "ma_not_below", maPeriod: 5, lookback: 20, useClose: true }]
+    }
+  },
+  {
     name: "RSI 超卖反弹",
     kind: "indicator",
     enabled: true,
@@ -80,6 +108,34 @@ export const TEMPLATE_STRATEGIES: Omit<StrategyDoc, "id" | "createdAt" | "update
         { type: "macd_cross", direction: "golden" }
       ],
       exit: { logic: "or", conditions: [{ type: "rsi", period: 14, op: "gt", value: 70 }] }
+    }
+  },
+  {
+    name: "收盘站上MA20且MACD零轴上方",
+    kind: "indicator",
+    enabled: true,
+    schemaVersion: STRATEGY_SCHEMA_VERSION,
+    dsl: {
+      version: STRATEGY_SCHEMA_VERSION,
+      logic: "and",
+      conditions: [
+        { type: "price_ma", period: 20, op: "above" },
+        { type: "macd_zone", zone: "above_zero" }
+      ]
+    }
+  },
+  {
+    name: "放量突破BOLL上轨",
+    kind: "indicator",
+    enabled: true,
+    schemaVersion: STRATEGY_SCHEMA_VERSION,
+    dsl: {
+      version: STRATEGY_SCHEMA_VERSION,
+      logic: "and",
+      conditions: [
+        { type: "vol_ratio", period: 5, minRatio: 1.5 },
+        { type: "boll_break", period: 20, mult: 2, direction: "up" }
+      ]
     }
   }
 ];

@@ -1,4 +1,5 @@
-import { kdj, macd, ma, rsi, type Bar } from "./indicators";
+import { boll, kdj, macd, ma, rsi, type Bar } from "./indicators";
+import { parseNlByPlugins } from "./nlParserPlugins";
 import type { Condition, LogicOp, StrategyDSL, StrategyDoc } from "./strategyTypes";
 
 function evalLogic(op: LogicOp, results: boolean[]): boolean {
@@ -38,17 +39,66 @@ function evalCondition(bars: Bar[], i: number, c: Condition, closes: number[]): 
       const golden = c.direction !== "death";
       return maCrossAt(closes, c.fast, c.slow, i, golden);
     }
+    case "macd_zone": {
+      const { dif, dea } = macd(closes, 12, 26, 9);
+      const a = dif[i];
+      const b = dea[i];
+      if (Number.isNaN(a) || Number.isNaN(b)) return false;
+      return c.zone === "above_zero" ? a > 0 && b > 0 : a < 0 && b < 0;
+    }
+    case "price_ma": {
+      const m = ma(closes, c.period);
+      const mv = m[i];
+      if (Number.isNaN(mv)) return false;
+      return c.op === "above" ? closes[i] > mv : closes[i] < mv;
+    }
     case "rsi": {
       const r = rsi(closes, c.period);
       const v = r[i];
       if (Number.isNaN(v)) return false;
       return c.op === "gt" ? v > c.value : v < c.value;
     }
+    case "boll_break": {
+      const b = boll(closes, c.period, c.mult);
+      if (c.direction === "up") return closes[i] > b.upper[i];
+      return closes[i] < b.lower[i];
+    }
+    case "vol_ratio": {
+      const vols = bars.map((x) => Number(x.volume ?? 0));
+      const vma = ma(vols, c.period);
+      if (Number.isNaN(vma[i]) || vma[i] <= 0) return false;
+      return vols[i] / vma[i] >= c.minRatio;
+    }
     case "kdj_j": {
       const { j } = kdj(bars, 9, 3, 3);
       const v = j[i];
       if (Number.isNaN(v)) return false;
       return c.op === "gt" ? v > c.value : v < c.value;
+    }
+    case "limit_up_within": {
+      const lb = Math.max(1, Math.min(c.lookback, i + 1));
+      const start = i - lb + 1;
+      const th = c.thresholdPct ?? 9.8;
+      for (let k = Math.max(1, start); k <= i; k += 1) {
+        const prev = closes[k - 1];
+        const cur = closes[k];
+        if (!Number.isFinite(prev) || prev <= 0 || !Number.isFinite(cur)) continue;
+        const pct = ((cur - prev) / prev) * 100;
+        if (pct >= th) return true;
+      }
+      return false;
+    }
+    case "ma_not_below": {
+      const lb = Math.max(1, Math.min(c.lookback, i + 1));
+      const start = i - lb + 1;
+      const m = ma(closes, c.maPeriod);
+      for (let k = start; k <= i; k += 1) {
+        const base = c.useClose === false ? bars[k].low : closes[k];
+        const mv = m[k];
+        if (Number.isNaN(mv)) return false;
+        if (base < mv) return false;
+      }
+      return true;
     }
     case "pattern": {
       const lb = Math.min(c.lookback, i + 1);
@@ -77,6 +127,10 @@ function evalCondition(bars: Bar[], i: number, c: Condition, closes: number[]): 
     default:
       return false;
   }
+}
+
+function parseNlToDsl(expr: string): StrategyDSL | undefined {
+  return parseNlByPlugins(expr);
 }
 
 export function evaluateDSL(dsl: StrategyDSL, bars: Bar[], i: number): { buy: boolean; sell: boolean } {
@@ -134,7 +188,11 @@ export function evaluateStrategyDoc(
   if (doc.dsl) {
     return evaluateDSL(doc.dsl, bars, i);
   }
-  // 白话文极简规则匹配
+  // 白话文 / 同花顺 / 通达信指标口令解析
+  const parsed = parseNlToDsl(doc.exprText ?? "");
+  if (parsed) {
+    return evaluateDSL(parsed, bars, i);
+  }
   const t = (doc.exprText ?? "").toLowerCase();
   if (t.includes("macd") && t.includes("金叉")) {
     const { dif, dea } = macd(bars.map((b) => b.close), 12, 26, 9);

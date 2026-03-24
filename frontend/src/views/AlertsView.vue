@@ -8,8 +8,15 @@
     <el-card class="aq-card">
       <template #header>新建预警</template>
       <el-form :inline="true">
-        <el-form-item label="代码">
-          <el-input v-model="form.symbol" placeholder="600519" style="width: 120px" />
+        <el-form-item label="股票">
+          <el-select-v2
+            v-model="form.symbol"
+            filterable
+            clearable
+            placeholder="请选择股票"
+            :options="stockSelectOptions"
+            style="width: 280px"
+          />
         </el-form-item>
         <el-form-item label="类型">
           <el-select v-model="form.kind" style="width: 160px">
@@ -52,10 +59,13 @@
 
 <script setup lang="ts">
 import { ElMessage } from "element-plus";
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
+import { getStockList } from "../api/client";
 import { deleteAlert, listAlerts, saveAlert, type AlertRecord } from "../db/idb";
 
 const rows = ref<AlertRecord[]>([]);
+const stockOptions = ref<Array<{ value: string; label: string; name: string }>>([]);
+const stockSelectOptions = computed(() => stockOptions.value);
 const form = reactive({
   symbol: "",
   kind: "price_above" as AlertRecord["kind"],
@@ -68,6 +78,21 @@ function uid(): string {
 
 async function load() {
   rows.value = await listAlerts();
+}
+
+async function loadStockOptions() {
+  try {
+    const list = (await getStockList()) as Array<{ symbol: string; name: string }>;
+    stockOptions.value = list
+      .map((r) => {
+        const symbol = String(r.symbol).padStart(6, "0");
+        const name = String(r.name ?? "");
+        return { value: symbol, label: `${name || "未知名称"} (${symbol})`, name };
+      })
+      .filter((r) => /^\d{6}$/.test(r.value));
+  } catch {
+    stockOptions.value = [];
+  }
 }
 
 async function add() {
@@ -108,6 +133,7 @@ function requestNotify() {
 }
 
 onMounted(load);
+onMounted(loadStockOptions);
 </script>
 
 <style scoped>
