@@ -32,9 +32,10 @@
           <el-table-column prop="updatedAt" label="更新" width="170">
             <template #default="{ row }">{{ fmt(row.updatedAt) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="200" fixed="right">
+          <el-table-column label="操作" width="260" fixed="right">
             <template #default="{ row }">
               <el-button type="primary" text @click="row.kind === 'combo' ? openCombo(row) : openEditor(row)">编辑</el-button>
+              <el-button v-if="row.kind === 'combo'" text @click="copyCombo(row)">复制</el-button>
               <el-button type="danger" text @click="remove(row.id)">删除</el-button>
             </template>
           </el-table-column>
@@ -305,6 +306,28 @@ async function saveCombo() {
   comboVisible.value = false;
   await load();
   ElMessage.success(old ? "组合已更新" : "组合已保存");
+}
+
+async function copyCombo(row: StrategyDoc) {
+  if (row.kind !== "combo") return;
+  const now = Date.now();
+  const doc: StrategyDoc = {
+    ...row,
+    id: uid(),
+    name: `${row.name}_副本`,
+    createdAt: now,
+    updatedAt: now,
+    combo: row.combo
+      ? {
+          ...row.combo,
+          strategyIds: row.combo.strategyIds ? [...row.combo.strategyIds] : undefined,
+          strategyRefs: row.combo.strategyRefs ? row.combo.strategyRefs.map((x) => ({ ...x })) : undefined
+        }
+      : undefined
+  };
+  await saveStrategyDoc(doc);
+  await load();
+  ElMessage.success("组合已复制");
 }
 
 watch(

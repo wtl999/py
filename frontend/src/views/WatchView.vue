@@ -28,6 +28,7 @@
         </el-form-item>
       </el-form>
       <div class="status">连接状态：<b>{{ connected ? "已连接" : "未连接" }}</b> · 已缓存K线：{{ barCache.size }} 只</div>
+      <div class="status">今日信号：{{ sigStats.total }}（买 {{ sigStats.buy }} / 卖 {{ sigStats.sell }} / 预警 {{ sigStats.alert }}）</div>
     </el-card>
 
     <el-card class="aq-card">
@@ -77,6 +78,12 @@ const signalCooldown = new Map<string, number>();
 const barCache = new Map<string, Bar[]>();
 let strategyDocs: StrategyDoc[] = [];
 let alertRows: AlertRecord[] = [];
+const sigStats = ref({ day: "", total: 0, buy: 0, sell: 0, alert: 0 });
+
+function todayYmd(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 function getSymbols(): Set<string> {
   return new Set(
@@ -141,6 +148,12 @@ async function onSignal(sig: Omit<SignalRecord, "id" | "time">) {
   const last = signalCooldown.get(cooldownKey) ?? 0;
   if (now - last < 60_000) return;
   signalCooldown.set(cooldownKey, now);
+  const ymd = todayYmd();
+  if (sigStats.value.day !== ymd) sigStats.value = { day: ymd, total: 0, buy: 0, sell: 0, alert: 0 };
+  sigStats.value.total += 1;
+  if (sig.signalType === "buy") sigStats.value.buy += 1;
+  else if (sig.signalType === "sell") sigStats.value.sell += 1;
+  else sigStats.value.alert += 1;
 
   const saved = await saveSignal(sig);
   if (typeof Notification !== "undefined" && Notification.permission === "granted") {

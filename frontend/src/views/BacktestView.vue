@@ -10,6 +10,9 @@
         <el-form-item label="标的代码">
           <el-input v-model="symbol" style="width: 120px" />
         </el-form-item>
+        <el-form-item label="批量标的(逗号分隔)">
+          <el-input v-model="batchSymbols" style="width: 240px" placeholder="000001,600519,300750" />
+        </el-form-item>
         <el-form-item label="策略">
           <el-select v-model="strategyId" filterable style="width: 200px">
             <el-option label="内置 MACD 金叉" value="__macd__" />
@@ -61,6 +64,7 @@
           <el-button :disabled="!result.trades.length" @click="exportPdf">导出 PDF 报告</el-button>
           <el-button :disabled="!compareResults.length" @click="exportComparePdf">导出对比 PDF</el-button>
           <el-button :disabled="!compareResults.length" @click="exportChartPng">导出曲线 PNG</el-button>
+          <el-button :disabled="!batchResults.length" @click="exportBatchCsv">导出批量排名 CSV</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -105,6 +109,24 @@
       </el-table>
     </el-card>
 
+    <el-card class="aq-card table-card" v-if="batchResults.length">
+      <template #header>多标的批量回测排名（{{ batchResults.length }}）</template>
+      <el-table :data="batchResults" size="small" stripe>
+        <el-table-column prop="symbol" label="代码" width="100" />
+        <el-table-column prop="strategyName" label="策略" min-width="160" />
+        <el-table-column label="总收益率(%)" width="130">
+          <template #default="{ row }">{{ (row.totalReturn * 100).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column label="最大回撤(%)" width="130">
+          <template #default="{ row }">{{ (row.maxDrawdown * 100).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column label="胜率(%)" width="110">
+          <template #default="{ row }">{{ (row.winRate * 100).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column prop="sharpeApprox" label="夏普(近似)" width="120" />
+      </el-table>
+    </el-card>
+
     <el-card class="aq-card table-card">
       <template #header>交易明细（{{ result.trades.length }} 笔）</template>
       <el-table :data="result.trades" size="small" max-height="420" stripe>
@@ -133,6 +155,7 @@ import type { Bar } from "../utils/indicators";
 import type { StrategyDoc } from "../utils/strategyTypes";
 
 const symbol = ref("600519");
+const batchSymbols = ref("");
 const strategyId = ref("__macd__");
 const compareIds = ref<string[]>([]);
 const strategyList = ref<StrategyDoc[]>([]);
@@ -150,6 +173,7 @@ const chartRef = ref<HTMLDivElement | null>(null);
 let chart: echarts.ECharts | null = null;
 let worker: Worker | null = null;
 const compareResults = ref<Array<BacktestResult & { id: string; name: string }>>([]);
+const batchResults = ref<Array<BacktestResult & { symbol: string; strategyName: string }>>([]);
 
 const result = reactive<BacktestResult>({
   trades: [],
@@ -183,16 +207,43 @@ function nameOfStrategy(id: string): string {
 async function run() {
   loading.value = true;
   try {
-    const rows = (await getHistorical({ symbol: symbol.value, period: "daily" })) as Array<Record<string, unknown>>;
-    const bars: Bar[] = rows.map((r) => ({
-      date: String(r.date ?? ""),
-      open: Number(r.open ?? 0),
-      high: Number(r.high ?? 0),
-      low: Number(r.low ?? 0),
-      close: Number(r.close ?? 0),
-      volume: Number(r.volume ?? 0)
-    }));
-    if (bars.length < 60) {
+    const list = (batchSymbols.value.trim() ? batchSymbols.value : symbol.value)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const uniqSymbols = Array.from(new Set(list));
+    if (!uniqSymbols.length) {
+      ElMessage.warning("请至少输入一个标的");
+      return;
+    }
+    if (uniqSymbols.length > 1) {
+      const st = strategyId.value === "__macd__" ? getBuiltinMacdStrategy() : resolveStrategy(strategyId.value);
+      if (!st) {
+        ElMessage.warning("当前策略不存在");
+        return;
+      }
+      const out: Array<BacktestResult & { symbol: string; strategyName: string }> = [];
+      for (const sym of uniqSymbols) {
+        const bars = await fetchBars(sym);
+        if (!bars || bars.length < 60) continue;
+        const one = await runInWorker(bars, st);
+        out.push({ ...one, symbol: sym, strategyName: st.name });
+      }
+      out.sort((a, b) => b.totalReturn - a.totalReturn);
+      batchResults.value = out;
+      if (out.length) {
+        symbol.value = out[0].symbol;
+        Object.assign(result, out[0]);
+      }
+      compareResults.value = [];
+      ElMessage.success(`批量回测完成：${out.length} 只标的`);
+      await nextTick();
+      renderChart();
+      return;
+    }
+    batchResults.value = [];
+    const bars = await fetchBars(symbol.value);
+    if (!bars || bars.length < 60) {
       ElMessage.warning("数据太少，至少需要约 60 根K线");
       return;
     }
@@ -220,6 +271,19 @@ async function run() {
   } finally {
     loading.value = false;
   }
+}
+
+async function fetchBars(sym: string): Promise<Bar[] | null> {
+  const rows = (await getHistorical({ symbol: sym, period: "daily" })) as Array<Record<string, unknown>>;
+  const bars: Bar[] = rows.map((r) => ({
+    date: String(r.date ?? ""),
+    open: Number(r.open ?? 0),
+    high: Number(r.high ?? 0),
+    low: Number(r.low ?? 0),
+    close: Number(r.close ?? 0),
+    volume: Number(r.volume ?? 0)
+  }));
+  return bars.length ? bars : null;
 }
 
 function runInWorker(bars: Bar[], strategy: StrategyDoc): Promise<BacktestResult> {
@@ -319,6 +383,24 @@ function exportCompareCsv() {
     ])
   );
   ElMessage.success("对比 CSV 已导出");
+}
+
+function exportBatchCsv() {
+  if (!batchResults.value.length) return;
+  downloadCsv(
+    `backtest_batch_${Date.now()}.csv`,
+    ["symbol", "strategyName", "totalReturn", "maxDrawdown", "winRate", "sharpeApprox", "tradeCount"],
+    batchResults.value.map((r) => [
+      r.symbol,
+      r.strategyName,
+      r.totalReturn,
+      r.maxDrawdown,
+      r.winRate,
+      r.sharpeApprox,
+      r.trades.length
+    ])
+  );
+  ElMessage.success("批量排名 CSV 已导出");
 }
 
 function exportHtml() {
