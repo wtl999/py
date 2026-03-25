@@ -6,7 +6,7 @@
 
 - 双击项目根目录下的 `start.bat`，或在 CMD 中执行 `start.bat`。
 - 也可在 PowerShell 中执行：`powershell -ExecutionPolicy Bypass -File .\start.ps1`  
-  会各打开一个窗口：后端 `8000`、前端 `5173`；若不存在 `frontend\node_modules`，前端窗口会自动执行 `npm install`。
+  会各打开一个窗口：后端 `8000`、前端 `5174`；若不存在 `frontend\node_modules`，前端窗口会自动执行 `npm install`。
 
 **首次使用后端**：若尚未创建虚拟环境，请先在 `backend` 目录执行：
 

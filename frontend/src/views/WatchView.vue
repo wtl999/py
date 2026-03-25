@@ -157,13 +157,14 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from "element-plus";
 import { storeToRefs } from "pinia";
-import { computed, onBeforeUnmount, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { getHistorical, getStockList } from "../api/client";
 import {
   deleteStrategyDoc,
   executePaperTrade,
   getPaperFeeRate,
   listAlerts,
+  listSignals,
   listStrategyDocs,
   saveSignal,
   saveStrategyDoc,
@@ -372,6 +373,32 @@ async function removeStrategy(id: string) {
 function todayYmd(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function tsToYmd(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+async function initSigStatsFromLocal(): Promise<void> {
+  try {
+    const rows = await listSignals(5000);
+    const ymd = todayYmd();
+    const today = rows.filter((r) => tsToYmd(r.time) === ymd);
+    sigStats.value = {
+      day: ymd,
+      total: today.length,
+      buy: today.filter((s) => s.signalType === "buy").length,
+      sell: today.filter((s) => s.signalType === "sell").length,
+      alert: today.filter((s) => s.signalType === "alert").length
+    };
+    strategyHitCounter.value = today.reduce((acc, s) => {
+      acc[s.strategy] = (acc[s.strategy] ?? 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+  } catch {
+    // ignore
+  }
 }
 
 function getSymbols(): Set<string> {
@@ -654,8 +681,6 @@ async function connect() {
   };
 }
 
-void loadStockOptions();
-
 function disconnect() {
   if (ws) {
     ws.close();
@@ -683,6 +708,11 @@ async function manualTrade(row: QuoteRow, side: "buy" | "sell") {
 
 onBeforeUnmount(() => {
   disconnect();
+});
+
+onMounted(() => {
+  void initSigStatsFromLocal();
+  void loadStockOptions();
 });
 </script>
 

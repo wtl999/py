@@ -16,14 +16,20 @@ if (Test-Path $venvActivate) {
 } elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
   $backendCmd = "cd /d `"`"$Backend`"`" && python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 } else {
-  $backendCmd = "cd /d `"`"$Backend`"`" && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+  $backendCmd = $null
 }
 
-Start-Process cmd -ArgumentList "/k", $backendCmd -WindowStyle Normal
-Start-Sleep -Seconds 1
-
 $frontendCmd = "cd /d `"`"$Frontend`"`" && if not exist node_modules (npm install) && npm run dev"
+
+if ($backendCmd) {
+  Start-Process cmd -ArgumentList "/k", $backendCmd -WindowStyle Normal
+  Start-Sleep -Seconds 1
+} else {
+  Write-Host "[WARN] 未找到 Python3（py/python3），后端无法启动；前端将继续启动。" -ForegroundColor Yellow
+  Start-Sleep -Seconds 1
+}
+
 Start-Process cmd -ArgumentList "/k", $frontendCmd -WindowStyle Normal
 
 Write-Host "后端: http://127.0.0.1:8000/docs" -ForegroundColor Green
-Write-Host "前端: http://127.0.0.1:5173" -ForegroundColor Green
+Write-Host "前端: http://127.0.0.1:5174" -ForegroundColor Green
