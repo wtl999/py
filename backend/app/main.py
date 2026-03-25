@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import Base, engine
-from app.routers import historical, market, realtime, stocks, sync
+from app.routers import historical, market, realtime, stocks, sync, screen
 from app.services import ak_client
 
 Base.metadata.create_all(bind=engine)
@@ -26,6 +26,7 @@ app.include_router(historical.router)
 app.include_router(realtime.router)
 app.include_router(sync.router)
 app.include_router(market.router)
+app.include_router(screen.router)
 
 
 @app.get("/health")

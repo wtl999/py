@@ -38,3 +38,10 @@ class SyncStatus(BaseModel):
 
 class RealtimeRequest(BaseModel):
     symbols: str = Field(..., description="comma separated")
+
+
+class ScreenRequest(BaseModel):
+    text: str
+    symbols: list[str] = []
+    limit: int = 50
+    use_db: bool = False
